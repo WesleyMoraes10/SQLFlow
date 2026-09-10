@@ -1,0 +1,180 @@
+@page "/configuracoes"
+@using DevelopTi.Shared.Services
+@using DevelopTi.Services
+@inject ThemeService ThemeService
+@inject AppSettingsService AppSettings
+@implements IDisposable
+
+<PageTitle>Configurações - DevelopTi</PageTitle>
+
+<div class="settings-shell">
+    <header class="settings-topbar">
+        <a href="/" class="settings-back" title="Voltar para o workspace">
+            <span aria-hidden="true">←</span> Voltar
+        </a>
+        <span class="settings-topbar-sep">/</span>
+        <span class="settings-topbar-title">Configurações</span>
+    </header>
+
+    <div class="settings-body">
+        <nav class="settings-nav" aria-label="Categorias de configuração">
+            <button type="button" class="settings-nav-item active">
+                <span class="settings-nav-icon icon-appearance" aria-hidden="true"></span>
+                Aparência
+            </button>
+        </nav>
+
+        <div class="settings-content">
+            <section class="settings-section">
+                <div class="settings-section-header">
+                    <span class="settings-eyebrow">Aparência</span>
+                    <h1>Tema de cores</h1>
+                    <p class="settings-section-desc">Escolha a paleta de cores usada em toda a aplicação. A alteração é aplicada imediatamente e lembrada na próxima vez que você abrir o DevelopTi.</p>
+                </div>
+
+                <div class="theme-grid" role="radiogroup" aria-label="Tema de cores">
+                    <button type="button" class="theme-card @(IsSelected(ThemeService.Light))" role="radio"
+                            aria-checked="@((ThemeService.CurrentTheme == ThemeService.Light).ToString().ToLowerInvariant())"
+                            @onclick="() => SelectThemeAsync(ThemeService.Light)">
+                        <span class="theme-preview theme-preview-light" aria-hidden="true">
+                            <span class="theme-preview-topbar">
+                                <span class="theme-preview-dot"></span>
+                                <span class="theme-preview-brand"></span>
+                            </span>
+                            <span class="theme-preview-body">
+                                <span class="theme-preview-tree">
+                                    <span></span><span></span><span></span>
+                                </span>
+                                <span class="theme-preview-main">
+                                    <span class="theme-preview-line long"></span>
+                                    <span class="theme-preview-line"></span>
+                                    <span class="theme-preview-line short"></span>
+                                </span>
+                            </span>
+                        </span>
+                        <span class="theme-card-footer">
+                            <span class="theme-radio" aria-hidden="true"></span>
+                            <span class="theme-card-label">Claro</span>
+                        </span>
+                    </button>
+
+                    <button type="button" class="theme-card @(IsSelected(ThemeService.Dark))" role="radio"
+                            aria-checked="@((ThemeService.CurrentTheme == ThemeService.Dark).ToString().ToLowerInvariant())"
+                            @onclick="() => SelectThemeAsync(ThemeService.Dark)">
+                        <span class="theme-preview theme-preview-dark" aria-hidden="true">
+                            <span class="theme-preview-topbar">
+                                <span class="theme-preview-dot"></span>
+                                <span class="theme-preview-brand"></span>
+                            </span>
+                            <span class="theme-preview-body">
+                                <span class="theme-preview-tree">
+                                    <span></span><span></span><span></span>
+                                </span>
+                                <span class="theme-preview-main">
+                                    <span class="theme-preview-line long"></span>
+                                    <span class="theme-preview-line"></span>
+                                    <span class="theme-preview-line short"></span>
+                                </span>
+                            </span>
+                        </span>
+                        <span class="theme-card-footer">
+                            <span class="theme-radio" aria-hidden="true"></span>
+                            <span class="theme-card-label">Escuro</span>
+                        </span>
+                    </button>
+
+                    <button type="button" class="theme-card @(IsSelected(ThemeService.FreshcutContrast))" role="radio"
+                            aria-checked="@((ThemeService.CurrentTheme == ThemeService.FreshcutContrast).ToString().ToLowerInvariant())"
+                            @onclick="() => SelectThemeAsync(ThemeService.FreshcutContrast)">
+                        <span class="theme-preview theme-preview-freshcut" aria-hidden="true">
+                            <span class="theme-preview-topbar">
+                                <span class="theme-preview-dot"></span>
+                                <span class="theme-preview-brand"></span>
+                            </span>
+                            <span class="theme-preview-body">
+                                <span class="theme-preview-tree">
+                                    <span></span><span></span><span></span>
+                                </span>
+                                <span class="theme-preview-main">
+                                    <span class="theme-preview-line long"></span>
+                                    <span class="theme-preview-line"></span>
+                                    <span class="theme-preview-line short"></span>
+                                </span>
+                            </span>
+                        </span>
+                        <span class="theme-card-footer">
+                            <span class="theme-radio" aria-hidden="true"></span>
+                            <span class="theme-card-label">Freshcut Contrast</span>
+                        </span>
+                    </button>
+                </div>
+
+                <div class="settings-section-header settings-section-header-spaced">
+                    <span class="settings-eyebrow">Aparência</span>
+                    <h1>Resultados simultâneos</h1>
+                    <p class="settings-section-desc">Quando você roda até 3 consultas ao mesmo tempo (selecionando o trecho com várias consultas), escolha como os resultados aparecem na tela.</p>
+                </div>
+
+                <div class="layout-grid" role="radiogroup" aria-label="Layout dos resultados simultâneos">
+                    <button type="button" class="layout-card @(IsLayoutSelected(true))" role="radio"
+                            aria-checked="@(AppSettings.ParallelResultsHorizontal.ToString().ToLowerInvariant())"
+                            @onclick="() => SelectLayoutAsync(true)">
+                        <span class="layout-preview layout-preview-horizontal" aria-hidden="true">
+                            <span></span><span></span><span></span>
+                        </span>
+                        <span class="theme-card-footer">
+                            <span class="theme-radio" aria-hidden="true"></span>
+                            <span class="theme-card-label">Lado a lado</span>
+                        </span>
+                    </button>
+
+                    <button type="button" class="layout-card @(IsLayoutSelected(false))" role="radio"
+                            aria-checked="@((!AppSettings.ParallelResultsHorizontal).ToString().ToLowerInvariant())"
+                            @onclick="() => SelectLayoutAsync(false)">
+                        <span class="layout-preview layout-preview-vertical" aria-hidden="true">
+                            <span></span><span></span><span></span>
+                        </span>
+                        <span class="theme-card-footer">
+                            <span class="theme-radio" aria-hidden="true"></span>
+                            <span class="theme-card-label">Empilhado</span>
+                        </span>
+                    </button>
+                </div>
+            </section>
+        </div>
+    </div>
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        ThemeService.ThemeChanged += StateHasChanged;
+        AppSettings.Changed += StateHasChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await ThemeService.InitializeAsync();
+            StateHasChanged();
+        }
+    }
+
+    private string IsSelected(string theme) => ThemeService.CurrentTheme == theme ? "selected" : string.Empty;
+
+    private async Task SelectThemeAsync(string theme)
+    {
+        await ThemeService.SetThemeAsync(theme);
+    }
+
+    private string IsLayoutSelected(bool horizontal) => AppSettings.ParallelResultsHorizontal == horizontal ? "selected" : string.Empty;
+
+    private void SelectLayoutAsync(bool horizontal) => AppSettings.SetParallelResultsHorizontal(horizontal);
+
+    public void Dispose()
+    {
+        ThemeService.ThemeChanged -= StateHasChanged;
+        AppSettings.Changed -= StateHasChanged;
+    }
+}

@@ -1,0 +1,499 @@
+@using System.Data.Common
+@inject IConnectionProfileStore ProfileStore
+@inject ICredentialStore CredentialStore
+@inject IDbConnectionFactory ConnectionFactory
+@inject IMetadataProviderFactory MetadataProviderFactory
+@inject IJSRuntime JS
+
+<div class="tree-header">
+    <span class="tree-header-title">Conexões</span>
+    <button class="icon-btn icon-btn-add" title="Nova conexão" @onclick="ShowAddModal">
+        <span class="tree-header-icon icon-plus"></span>
+    </button>
+</div>
+
+@if (_error is not null)
+{
+    <div class="db-alert db-alert-danger tree-error">@_error</div>
+}
+
+<div class="tree-scroll">
+    @if (_profiles.Count == 0)
+    {
+        <p class="tree-empty">Nenhuma conexão ainda.<br />Clique em <strong>+</strong> pra criar a primeira.</p>
+    }
+    else
+    {
+        <ul class="tree-root">
+            @foreach (var profile in _profiles)
+            {
+                var profileExpanded = _expandedProfiles.Contains(profile.Id);
+                var loading = _loadingChildren.TryGetValue(profile.Id, out var isLoading) && isLoading;
+                var browsesDatabases = ProviderFor(profile).SupportsDatabaseBrowsing;
+                <li>
+                    <div class="tree-node tree-node-connection kind-@profile.Kind.ToString().ToLowerInvariant()"
+                         @onclick="() => ToggleProfile(profile)"
+                         @oncontextmenu="(e) => ShowContextMenu(e, profile)"
+                         @oncontextmenu:preventDefault="true">
+                        <span class="tree-caret @(profileExpanded ? "expanded" : "")"></span>
+                        <span class="tree-icon icon-connection"></span>
+                        <span class="tree-label">@profile.Name</span>
+                        <span class="tree-host">@profile.Host@(profile.Port.HasValue ? $":{profile.Port}" : "")</span>
+                        @if (_verifiedProfiles.Contains(profile.Id))
+                        {
+                            <span class="tree-verified-check" title="Última tentativa de conexão funcionou">✓</span>
+                        }
+                        <span class="db-badge tree-kind-badge">@profile.Kind</span>
+                        <span class="tree-node-actions">
+                            <button class="icon-btn" title="Nova consulta SQL" disabled="@_verifyingProfiles.Contains(profile.Id)"
+                                    @onclick="() => NewQuery(profile)" @onclick:stopPropagation="true">
+                                <span class="tree-header-icon icon-new-query"></span>
+                            </button>
+                            <button class="icon-btn" title="Editar" @onclick="() => ShowEditModal(profile)" @onclick:stopPropagation="true">
+                                <span class="tree-header-icon icon-edit"></span>
+                            </button>
+                            <button class="icon-btn icon-btn-danger" title="Excluir" @onclick="() => DeleteProfile(profile)" @onclick:stopPropagation="true">
+                                <span class="tree-header-icon icon-trash"></span>
+                            </button>
+                        </span>
+                    </div>
+
+                    @if (profileExpanded)
+                    {
+                        <ul class="tree-children">
+                            @if (loading)
+                            {
+                                <li class="tree-loading">@(browsesDatabases ? "Carregando bancos..." : "Carregando schemas...")</li>
+                            }
+                            else if (browsesDatabases)
+                            {
+                                @if (_databasesByProfile.TryGetValue(profile.Id, out var databases))
+                                {
+                                    @foreach (var database in databases)
+                                    {
+                                        var dbKey = $"{profile.Id}|{database}";
+                                        var dbExpanded = _expandedDatabases.Contains(dbKey);
+                                        var dbLoading = _loadingChildren.TryGetValue(dbKey, out var dbIsLoading) && dbIsLoading;
+                                        <li>
+                                            <div class="tree-node tree-node-database" @onclick="() => ToggleDatabase(profile, database)">
+                                                <span class="tree-caret @(dbExpanded ? "expanded" : "")"></span>
+                                                <span class="tree-icon icon-database"></span>
+                                                <span class="tree-label">@database</span>
+                                            </div>
+
+                                            @if (dbExpanded)
+                                            {
+                                                <ul class="tree-children">
+                                                    @if (dbLoading)
+                                                    {
+                                                        <li class="tree-loading">Carregando schemas...</li>
+                                                    }
+                                                    else
+                                                    {
+                                                        @RenderSchemas(profile, dbKey, database)
+                                                    }
+                                                </ul>
+                                            }
+                                        </li>
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                @RenderSchemas(profile, profile.Id, null)
+                            }
+                        </ul>
+                    }
+                </li>
+            }
+        </ul>
+    }
+</div>
+
+@if (_contextMenu is not null)
+{
+    var (x, y, profile) = _contextMenu.Value;
+    <div class="context-menu-backdrop" @onclick="CloseContextMenu" @oncontextmenu="CloseContextMenu" @oncontextmenu:preventDefault="true"></div>
+    <ul class="context-menu" style="left:@(x)px; top:@(y)px;">
+        <li><button @onclick="() => { CloseContextMenu(); return NewQuery(profile); }">Nova consulta SQL</button></li>
+        <li><button @onclick="() => { CloseContextMenu(); ShowEditModal(profile); }">Editar conexão</button></li>
+        <li><button class="context-menu-danger" @onclick="() => { CloseContextMenu(); return DeleteProfile(profile); }">Excluir conexão</button></li>
+    </ul>
+}
+
+@if (_showModal)
+{
+    <ConnectionFormModal EditingProfile="_editingProfile" OnClose="HandleModalClosed" OnSaved="HandleModalSaved" />
+}
+
+<ConfirmDialog @ref="_confirmDialog" />
+
+@code {
+    [Parameter] public EventCallback<(ConnectionProfile Profile, string? Database, string Schema, string Table)> OnOpenTable { get; set; }
+    [Parameter] public EventCallback<ConnectionProfile> OnNewQuery { get; set; }
+    [Parameter] public EventCallback OnProfilesChanged { get; set; }
+
+    private List<ConnectionProfile> _profiles = new();
+    private readonly HashSet<string> _expandedProfiles = new();
+
+    /// <summary>Perfis cuja última tentativa de expandir/conectar funcionou — mostra o ✓ verde.
+    /// Só reflete a última tentativa desta sessão; nunca testado ou falhou = sem marca nenhuma.</summary>
+    private readonly HashSet<string> _verifiedProfiles = new();
+    private readonly HashSet<string> _verifyingProfiles = new();
+
+    // Bancos (só usado por provedores com SupportsDatabaseBrowsing == true, ex: SQL Server).
+    private readonly Dictionary<string, IReadOnlyList<string>> _databasesByProfile = new();
+    private readonly HashSet<string> _expandedDatabases = new();
+
+    // Chave do "container" de schemas: "{profile.Id}" (provedor sem bancos) ou "{profile.Id}|{database}".
+    private readonly Dictionary<string, IReadOnlyList<SchemaInfo>> _schemasByContainer = new();
+    private readonly Dictionary<string, bool> _loadingChildren = new();
+    private readonly HashSet<string> _expandedSchemas = new();
+    private readonly Dictionary<string, List<TableInfo>> _tablesBySchema = new();
+    private readonly HashSet<string> _expandedTables = new();
+    private readonly Dictionary<string, List<ColumnInfo>> _columnsByTable = new();
+
+    private bool _showModal;
+    private ConfirmDialog? _confirmDialog;
+    private ConnectionProfile? _editingProfile;
+    private string? _error;
+    private (double X, double Y, ConnectionProfile Profile)? _contextMenu;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadProfilesAsync();
+    }
+
+    // Cresce a árvore pra caber o item mais largo visível (nome da conexão + host:porta, ou tabela/coluna
+    // expandida) — só aumenta, nunca fica menor que o mínimo nem passa do máximo do resizer manual.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await JS.InvokeVoidAsync("developtiResizer.autoFitWidth", "workspace-tree", new { min = 200, max = 520, padding = 4 });
+    }
+
+    private async Task ReloadProfilesAsync()
+    {
+        _profiles = (await ProfileStore.GetAllAsync()).ToList();
+    }
+
+    private IMetadataProvider ProviderFor(ConnectionProfile profile) => MetadataProviderFactory.GetProvider(profile.Kind);
+
+    private async Task<DbConnection> OpenConnectionAsync(ConnectionProfile profile, string? database = null)
+    {
+        var password = await CredentialStore.GetPasswordAsync(profile.Id)
+            ?? throw new InvalidOperationException("Senha não encontrada para esta conexão.");
+        var connection = ConnectionFactory.CreateConnection(profile, password);
+        await connection.OpenAsync();
+        if (!string.IsNullOrEmpty(database))
+        {
+            connection.ChangeDatabase(database);
+        }
+        return connection;
+    }
+
+    private async Task ToggleProfile(ConnectionProfile profile)
+    {
+        if (!_expandedProfiles.Add(profile.Id))
+        {
+            _expandedProfiles.Remove(profile.Id);
+            return;
+        }
+
+        var browsesDatabases = ProviderFor(profile).SupportsDatabaseBrowsing;
+        if (browsesDatabases)
+        {
+            if (_databasesByProfile.ContainsKey(profile.Id)) return;
+
+            _loadingChildren[profile.Id] = true;
+            _error = null;
+            try
+            {
+                using var connection = await OpenConnectionAsync(profile);
+                _databasesByProfile[profile.Id] = await ProviderFor(profile).GetDatabasesAsync(connection);
+                _verifiedProfiles.Add(profile.Id);
+            }
+            catch (Exception ex)
+            {
+                _error = $"Falha ao listar bancos em {profile.Name}: {ex.Message}";
+                _expandedProfiles.Remove(profile.Id);
+                _verifiedProfiles.Remove(profile.Id);
+            }
+            finally
+            {
+                _loadingChildren[profile.Id] = false;
+            }
+        }
+        else
+        {
+            if (_schemasByContainer.ContainsKey(profile.Id)) return;
+
+            _loadingChildren[profile.Id] = true;
+            _error = null;
+            try
+            {
+                using var connection = await OpenConnectionAsync(profile);
+                _schemasByContainer[profile.Id] = await ProviderFor(profile).GetSchemasAsync(connection);
+                _verifiedProfiles.Add(profile.Id);
+            }
+            catch (Exception ex)
+            {
+                _error = $"Falha ao conectar em {profile.Name}: {ex.Message}";
+                _expandedProfiles.Remove(profile.Id);
+                _verifiedProfiles.Remove(profile.Id);
+            }
+            finally
+            {
+                _loadingChildren[profile.Id] = false;
+            }
+        }
+    }
+
+    private async Task ToggleDatabase(ConnectionProfile profile, string database)
+    {
+        var dbKey = $"{profile.Id}|{database}";
+        if (!_expandedDatabases.Add(dbKey))
+        {
+            _expandedDatabases.Remove(dbKey);
+            return;
+        }
+
+        if (_schemasByContainer.ContainsKey(dbKey)) return;
+
+        _loadingChildren[dbKey] = true;
+        _error = null;
+        try
+        {
+            using var connection = await OpenConnectionAsync(profile, database);
+            _schemasByContainer[dbKey] = await ProviderFor(profile).GetSchemasAsync(connection);
+        }
+        catch (Exception ex)
+        {
+            _error = $"Falha ao carregar schemas de {database}: {ex.Message}";
+            _expandedDatabases.Remove(dbKey);
+        }
+        finally
+        {
+            _loadingChildren[dbKey] = false;
+        }
+    }
+
+    private async Task ToggleSchema(ConnectionProfile profile, string containerKey, string? database, string schemaName)
+    {
+        var key = $"{containerKey}|{schemaName}";
+        if (!_expandedSchemas.Add(key))
+        {
+            _expandedSchemas.Remove(key);
+            return;
+        }
+
+        if (!_tablesBySchema.ContainsKey(key))
+        {
+            try
+            {
+                using var connection = await OpenConnectionAsync(profile, database);
+                _tablesBySchema[key] = (await ProviderFor(profile).GetTablesAsync(connection, schemaName)).ToList();
+            }
+            catch (Exception ex)
+            {
+                _error = $"Falha ao carregar tabelas de {schemaName}: {ex.Message}";
+            }
+        }
+    }
+
+    private async Task ToggleTable(ConnectionProfile profile, string containerKey, string? database, string schemaName, string tableName)
+    {
+        var key = $"{containerKey}|{schemaName}|{tableName}";
+        if (!_expandedTables.Add(key))
+        {
+            _expandedTables.Remove(key);
+            return;
+        }
+
+        if (!_columnsByTable.ContainsKey(key))
+        {
+            try
+            {
+                using var connection = await OpenConnectionAsync(profile, database);
+                _columnsByTable[key] = (await ProviderFor(profile).GetColumnsAsync(connection, schemaName, tableName)).ToList();
+            }
+            catch (Exception ex)
+            {
+                _error = $"Falha ao carregar colunas de {tableName}: {ex.Message}";
+            }
+        }
+    }
+
+    private async Task OpenSelect(ConnectionProfile profile, string? database, string schemaName, string tableName)
+    {
+        await OnOpenTable.InvokeAsync((profile, database, schemaName, tableName));
+    }
+
+    /// <summary>Ao abrir uma aba nova pra esta conexão, testa a conexão de verdade primeiro — assim o
+    /// ✓ de "conectado" já aparece na árvore no instante em que a aba abre, sem esperar o usuário
+    /// expandir a conexão ou rodar uma query. Falha na verificação não impede a aba de abrir; o erro
+    /// de execução real aparece depois, quando o usuário tentar rodar algo.</summary>
+    private async Task NewQuery(ConnectionProfile profile)
+    {
+        _verifyingProfiles.Add(profile.Id);
+        try
+        {
+            using var connection = await OpenConnectionAsync(profile);
+            _verifiedProfiles.Add(profile.Id);
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = $"Falha ao conectar em {profile.Name}: {ex.Message}";
+            _verifiedProfiles.Remove(profile.Id);
+        }
+        finally
+        {
+            _verifyingProfiles.Remove(profile.Id);
+        }
+
+        await OnNewQuery.InvokeAsync(profile);
+    }
+
+    private void ShowContextMenu(MouseEventArgs e, ConnectionProfile profile)
+    {
+        _contextMenu = (e.ClientX, e.ClientY, profile);
+    }
+
+    private void CloseContextMenu()
+    {
+        _contextMenu = null;
+    }
+
+    private void ShowAddModal()
+    {
+        _editingProfile = null;
+        _showModal = true;
+    }
+
+    private void ShowEditModal(ConnectionProfile profile)
+    {
+        _editingProfile = profile;
+        _showModal = true;
+    }
+
+    private async Task DeleteProfile(ConnectionProfile profile)
+    {
+        var confirmed = _confirmDialog is not null && await _confirmDialog.ShowAsync(
+            "Excluir conexão",
+            $"Tem certeza que quer excluir a conexão \"{profile.Name}\"? A senha salva também será apagada. Isso não afeta o banco de dados, só remove daqui.",
+            confirmLabel: "Excluir", danger: true);
+        if (!confirmed) return;
+
+        await ProfileStore.DeleteAsync(profile.Id);
+        await CredentialStore.RemovePasswordAsync(profile.Id);
+        _expandedProfiles.Remove(profile.Id);
+        _schemasByContainer.Remove(profile.Id);
+        _databasesByProfile.Remove(profile.Id);
+        _verifiedProfiles.Remove(profile.Id);
+        await ReloadProfilesAsync();
+        await OnProfilesChanged.InvokeAsync();
+    }
+
+    private async Task HandleModalSaved()
+    {
+        _showModal = false;
+        // Os dados de conexão podem ter mudado (host/porta/usuário) — o ✓ anterior não vale mais até
+        // expandir de novo, senão fica um "verificado" desatualizado e enganoso.
+        if (_editingProfile is not null)
+        {
+            _verifiedProfiles.Remove(_editingProfile.Id);
+        }
+        _editingProfile = null;
+        await ReloadProfilesAsync();
+        await OnProfilesChanged.InvokeAsync();
+    }
+
+    private void HandleModalClosed()
+    {
+        _showModal = false;
+        _editingProfile = null;
+    }
+
+    private RenderFragment RenderSchemas(ConnectionProfile profile, string containerKey, string? database) => @<text>
+        @if (_schemasByContainer.TryGetValue(containerKey, out var schemas))
+        {
+            @foreach (var schema in schemas)
+            {
+                var schemaKey = $"{containerKey}|{schema.Name}";
+                var schemaExpanded = _expandedSchemas.Contains(schemaKey);
+                <li>
+                    <div class="tree-node" @onclick="() => ToggleSchema(profile, containerKey, database, schema.Name)">
+                        <span class="tree-caret @(schemaExpanded ? "expanded" : "")"></span>
+                        <span class="tree-icon icon-schema"></span>
+                        <span class="tree-label">@schema.Name</span>
+                    </div>
+
+                    @if (schemaExpanded)
+                    {
+                        <ul class="tree-children">
+                            @if (_tablesBySchema.TryGetValue(schemaKey, out var tables))
+                            {
+                                @foreach (var table in tables)
+                                {
+                                    var tableKey = $"{schemaKey}|{table.Name}";
+                                    var tableExpanded = _expandedTables.Contains(tableKey);
+                                    <li>
+                                        <div class="tree-node tree-node-table" @onclick="() => ToggleTable(profile, containerKey, database, schema.Name, table.Name)">
+                                            <span class="tree-caret @(tableExpanded ? "expanded" : "")"></span>
+                                            <span class="tree-icon @(table.IsView ? "icon-view" : "icon-table")"></span>
+                                            <span class="tree-label">@table.Name</span>
+                                            @if (table.IsView)
+                                            {
+                                                <span class="db-badge tree-view-badge">view</span>
+                                            }
+                                            <button class="db-btn db-btn-ghost tree-select-btn"
+                                                    @onclick="() => OpenSelect(profile, database, schema.Name, table.Name)"
+                                                    @onclick:stopPropagation="true">
+                                                SELECT *
+                                            </button>
+                                        </div>
+
+                                        @if (tableExpanded)
+                                        {
+                                            <ul class="tree-children">
+                                                @if (_columnsByTable.TryGetValue(tableKey, out var columns))
+                                                {
+                                                    @foreach (var column in columns)
+                                                    {
+                                                        <li>
+                                                            <div class="tree-node tree-leaf">
+                                                                <span class="tree-icon icon-column"></span>
+                                                                <span class="tree-label">@column.Name</span>
+                                                                <span class="tree-type">@column.DataType</span>
+                                                                @if (!column.Nullable)
+                                                                {
+                                                                    <span class="db-badge tree-nn-badge">NOT NULL</span>
+                                                                }
+                                                                @if (column.IsPrimaryKey)
+                                                                {
+                                                                    <span class="db-badge tree-pk-badge">PK</span>
+                                                                }
+                                                            </div>
+                                                        </li>
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    <li class="tree-loading">Carregando colunas...</li>
+                                                }
+                                            </ul>
+                                        }
+                                    </li>
+                                }
+                            }
+                            else
+                            {
+                                <li class="tree-loading">Carregando tabelas...</li>
+                            }
+                        </ul>
+                    }
+                </li>
+            }
+        }
+    </text>;
+}

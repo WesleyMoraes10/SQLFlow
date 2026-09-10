@@ -1,0 +1,296 @@
+/* Componentes de UI reutilizáveis entre as páginas do DevelopTi (paleta em wwwroot/../DevelopTi.Shared/wwwroot/app.css) */
+
+.page-header {
+    margin-bottom: 1.25rem;
+}
+
+    .page-header h1 {
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: var(--db-gray-900);
+        margin: 0 0 0.2rem;
+    }
+
+.page-subtitle {
+    color: var(--db-gray-500);
+    font-size: var(--db-font-size-base);
+    margin: 0;
+}
+
+.db-alert {
+    padding: 0.65rem 1rem;
+    border-radius: var(--db-radius);
+    font-size: var(--db-font-size-base);
+    margin-bottom: 1rem;
+    border: 1px solid transparent;
+}
+
+.db-alert-success {
+    background: var(--db-success-bg);
+    color: var(--db-success);
+    border-color: var(--db-success-border);
+}
+
+.db-alert-danger {
+    background: var(--db-danger-bg);
+    color: var(--db-danger);
+    border-color: var(--db-danger-border);
+}
+
+.db-panel {
+    background: var(--db-white);
+    border: 1px solid var(--db-gray-200);
+    border-radius: var(--db-radius);
+    box-shadow: var(--db-shadow);
+    padding: 1.25rem 1.5rem;
+}
+
+.db-panel-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--db-gray-900);
+    margin: 0 0 1rem;
+}
+
+.db-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.85rem;
+    font-size: var(--db-font-size-base);
+    font-weight: 500;
+    border-radius: var(--db-radius);
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background-color .12s ease, border-color .12s ease, color .12s ease;
+}
+
+    .db-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+.db-btn-primary {
+    background: var(--db-blue-600);
+    border-color: var(--db-blue-700);
+    color: #fff;
+}
+
+    .db-btn-primary:hover:not(:disabled) {
+        background: var(--db-blue-700);
+    }
+
+.db-btn-success {
+    background: var(--db-success);
+    border-color: var(--db-success);
+    color: #fff;
+}
+
+    .db-btn-success:hover:not(:disabled) {
+        filter: brightness(0.92);
+    }
+
+.db-btn-danger {
+    background: var(--db-danger);
+    border-color: var(--db-danger);
+    color: #fff;
+}
+
+    .db-btn-danger:hover:not(:disabled) {
+        filter: brightness(0.92);
+    }
+
+.db-btn-warning {
+    background: var(--db-warning);
+    border-color: var(--db-warning);
+    color: #fff;
+}
+
+    .db-btn-warning:hover:not(:disabled) {
+        filter: brightness(0.92);
+    }
+
+.db-btn-ghost {
+    background: var(--db-white);
+    border-color: var(--db-gray-200);
+    color: var(--db-gray-700);
+}
+
+    .db-btn-ghost:hover:not(:disabled) {
+        background: var(--db-gray-100);
+        border-color: var(--db-gray-400);
+    }
+
+.db-btn-ghost.db-btn-danger {
+    color: var(--db-danger);
+}
+
+    .db-btn-ghost.db-btn-danger:hover:not(:disabled) {
+        background: #fbeceb;
+        border-color: #f3cfcb;
+    }
+
+.db-btn-ghost.db-btn-success {
+    color: var(--db-success);
+}
+
+    .db-btn-ghost.db-btn-success:hover:not(:disabled) {
+        background: var(--db-success-bg);
+        border-color: var(--db-success-border);
+    }
+
+.db-btn-link {
+    background: none;
+    border: none;
+    color: var(--db-blue-700);
+    padding: 0.4rem 0.5rem;
+}
+
+    .db-btn-link:hover:not(:disabled) {
+        text-decoration: underline;
+    }
+
+.db-input, select.db-input, textarea.db-input {
+    width: 100%;
+    padding: 0.45rem 0.65rem;
+    font-size: var(--db-font-size-base);
+    border: 1px solid var(--db-gray-200);
+    border-radius: var(--db-radius);
+    background: var(--db-white);
+    color: var(--db-gray-900);
+    font-family: inherit;
+}
+
+    .db-input:focus {
+        outline: none;
+        border-color: var(--db-blue-500);
+        box-shadow: 0 0 0 3px var(--db-blue-100);
+    }
+
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.9rem 1.1rem;
+}
+
+.form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: var(--db-font-size-base);
+    color: var(--db-gray-700);
+    font-weight: 500;
+}
+
+.form-field-narrow {
+    max-width: 110px;
+}
+
+.form-field-hint {
+    max-width: 220px;
+    font-size: 0.72rem;
+    font-weight: 400;
+    line-height: 1.4;
+    color: var(--db-gray-500);
+}
+
+.form-actions {
+    margin-top: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.db-empty-state {
+    padding: 1.5rem;
+    text-align: center;
+    color: var(--db-gray-500);
+    border: 1px dashed var(--db-gray-200);
+    border-radius: var(--db-radius);
+    font-size: var(--db-font-size-base);
+    background: var(--db-white);
+}
+
+.conn-banner {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.9rem;
+    margin-bottom: 1rem;
+    background: var(--db-white);
+    border: 1px solid var(--db-gray-200);
+    border-radius: var(--db-radius);
+    font-size: var(--db-font-size-base);
+    color: var(--db-gray-700);
+}
+
+.conn-banner-dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--db-success);
+}
+
+.conn-banner-kind {
+    background: var(--db-blue-100);
+    color: var(--db-blue-700);
+}
+
+.db-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+.context-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+}
+
+.context-menu {
+    position: fixed;
+    z-index: 41;
+    min-width: 190px;
+    margin: 0;
+    padding: 0.35rem;
+    list-style: none;
+    background: var(--db-white);
+    border: 1px solid var(--db-gray-200);
+    border-radius: var(--db-radius);
+    box-shadow: 0 8px 24px rgba(22, 33, 44, 0.18);
+}
+
+    .context-menu li {
+        display: block;
+    }
+
+    .context-menu button {
+        display: block;
+        width: 100%;
+        text-align: left;
+        padding: 0.45rem 0.6rem;
+        border: none;
+        background: transparent;
+        border-radius: 4px;
+        font-size: var(--db-font-size-base);
+        color: var(--db-gray-700);
+        cursor: pointer;
+    }
+
+        .context-menu button:hover {
+            background: var(--db-gray-100);
+            color: var(--db-gray-900);
+        }
+
+    .context-menu button.context-menu-danger {
+        color: var(--db-danger);
+    }
+
+        .context-menu button.context-menu-danger:hover {
+            background: var(--db-danger-bg);
+        }

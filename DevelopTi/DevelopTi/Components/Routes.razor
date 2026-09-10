@@ -1,0 +1,9 @@
+@* Router local: as páginas de banco de dados (DevelopTi.Data + drivers ADO.NET) não podem viver em
+   DevelopTi.Shared, pois esse assembly também é compilado para o DevelopTi.Web.Client (Blazor WebAssembly),
+   onde esses drivers não funcionam. Layout/NavMenu continuam vindo de DevelopTi.Shared (são só UI). *@
+<Router AppAssembly="typeof(App).Assembly" NotFoundPage="typeof(DevelopTi.Shared.Pages.NotFound)">
+    <Found Context="routeData">
+        <RouteView RouteData="routeData" DefaultLayout="typeof(DevelopTi.Shared.Layout.MainLayout)" />
+        <FocusOnNavigate RouteData="routeData" Selector="h1" />
+    </Found>
+</Router>

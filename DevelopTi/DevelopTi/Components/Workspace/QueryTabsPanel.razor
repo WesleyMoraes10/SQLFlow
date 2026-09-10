@@ -1,0 +1,1477 @@
+@implements IDisposable
+@inject IConnectionProfileStore ProfileStore
+@inject QueryExecutionService QueryExecutionService
+@inject IQueryHistoryStore HistoryStore
+@inject QueryTabState TabState
+@inject SqlCompletionService CompletionService
+@inject GridEditService GridEditService
+@inject AppSettingsService AppSettings
+@inject SqlFileService SqlFileService
+@inject IJSRuntime JS
+
+<div class="query-workspace">
+    @if (TabState.Tabs.Count > 0)
+    {
+        <div class="tab-strip">
+            @foreach (var tab in TabState.Tabs)
+            {
+                var profile = ProfileFor(tab.ConnectionProfileId);
+                <div class="query-tab @(tab.Id == TabState.ActiveTabId ? "active" : "")" @onclick="() => ActivateTab(tab.Id)">
+                    @if (profile is not null)
+                    {
+                        <span class="query-tab-dot kind-@profile.Kind.ToString().ToLowerInvariant()"></span>
+                    }
+                    <span class="query-tab-title">@tab.Title</span>
+                    <button class="query-tab-close" title="Fechar aba" @onclick="() => CloseTab(tab.Id)" @onclick:stopPropagation="true">×</button>
+                </div>
+            }
+            <button class="query-tab-add" title="Nova consulta (mesma conexão da aba atual)" @onclick="AddBlankTab">+</button>
+        </div>
+    }
+
+    @if (ActiveTab is null)
+    {
+        <div class="welcome-screen">
+            <div class="welcome-mark">
+                <svg class="brand-svg" viewBox="0 0 456 456" aria-hidden="true">
+                    <polygon points="128,298 228,270 328,298 228,326" fill="#ffffff" fill-opacity="0.70" />
+                    <polygon points="128,228 228,200 328,228 228,256" fill="#ffffff" fill-opacity="0.85" />
+                    <polygon points="128,158 228,130 328,158 228,186" fill="#ffffff" />
+                </svg>
+            </div>
+            <h2 class="welcome-title">DevelopTi</h2>
+            <span class="welcome-version-badge">Versão 1.0</span>
+            <p class="welcome-desc">
+                Sistema para gerenciamento de banco de dados.
+            </p>
+            <div class="welcome-badges">
+                <span class="welcome-badge kind-oracle"><span class="welcome-badge-dot"></span>Oracle</span>
+                <span class="welcome-badge kind-sqlserver"><span class="welcome-badge-dot"></span>SQL Server</span>
+                <span class="welcome-badge kind-mysql"><span class="welcome-badge-dot"></span>MySQL</span>
+            </div>
+            <div class="welcome-hint-card">
+                <span class="welcome-hint-icon"></span>
+                <p class="welcome-hint">
+                    Nenhuma consulta aberta. Expanda uma conexão na árvore à esquerda e dê duplo clique numa tabela (ou use <strong>SELECT *</strong>) pra abrir uma aba.
+                </p>
+            </div>
+        </div>
+    }
+    else
+    {
+        var activeProfile = ProfileFor(ActiveTab.ConnectionProfileId);
+
+        <div class="editor-panel">
+            <div class="editor-toolbar">
+                <button class="db-btn db-btn-primary toolbar-btn-sm" @onclick="ExecuteAsync" disabled="@ActiveTab.Running" title="Executa todo o conteúdo do editor">
+                    <span class="toolbar-icon icon-run"></span>
+                    @(ActiveTab.Running ? "Executando..." : "Executar")
+                </button>
+                <label class="toolbar-limit">
+                    <span class="toolbar-icon icon-rows"></span>
+                    Limite de linhas
+                    <input type="number" class="db-input" value="@ActiveTab.MaxRows" @onchange="OnMaxRowsChanged" />
+                </label>
+
+                <label class="toolbar-autocommit" title="@(HasPendingTransaction(ActiveTab.Id) ? "Confirme ou desfaça a transação aberta antes de trocar o modo" : "Desligado: os comandos ficam numa transação aberta até você confirmar (Commit) ou desfazer (Rollback)")">
+                    <span class="toolbar-icon icon-autocommit"></span>
+                    <input type="checkbox" checked="@ActiveTab.AutoCommit" disabled="@HasPendingTransaction(ActiveTab.Id)" @onchange="OnAutoCommitChanged" />
+                    Auto-commit
+                </label>
+
+                @if (!ActiveTab.AutoCommit)
+                {
+                    <button class="db-btn db-btn-success toolbar-btn-sm" @onclick="() => CommitAsync(ActiveTab)" disabled="@(!HasPendingTransaction(ActiveTab.Id))" title="Confirma os comandos executados nesta aba">
+                        <span class="toolbar-icon icon-commit"></span>
+                        Commit
+                    </button>
+                    <button class="db-btn db-btn-danger toolbar-btn-sm" @onclick="() => RollbackAsync(ActiveTab)" disabled="@(!HasPendingTransaction(ActiveTab.Id))" title="Desfaz os comandos executados nesta aba desde o último commit">
+                        <span class="toolbar-icon icon-rollback"></span>
+                        Rollback
+                    </button>
+                    @if (HasPendingTransaction(ActiveTab.Id))
+                    {
+                        <span class="toolbar-pending-tag">@QueryExecutionService.PendingStatementCount(ActiveTab.Id) comando(s) não confirmado(s)</span>
+                    }
+                }
+
+                <button class="db-btn db-btn-ghost toolbar-btn-sm" @onclick="SaveActiveTabToFileAsync" disabled="@_savingSqlFile" title="Salva o conteúdo deste editor num arquivo .txt">
+                    <span class="toolbar-icon icon-save"></span>
+                    @(_savingSqlFile ? "Salvando..." : "Salvar")
+                </button>
+                @if (_saveSqlMessage is not null)
+                {
+                    <span class="export-message">@_saveSqlMessage</span>
+                }
+
+                @if (activeProfile is not null)
+                {
+                    <span class="toolbar-connection">
+                        <span class="query-tab-dot kind-@activeProfile.Kind.ToString().ToLowerInvariant()"></span>
+                        @activeProfile.Name
+                    </span>
+                }
+                <button class="db-btn db-btn-ghost toolbar-history-btn toolbar-btn-sm" @onclick="ToggleHistory" title="Histórico">
+                    <span class="toolbar-icon icon-history"></span>
+                </button>
+            </div>
+
+            <div class="editor-surface">
+                <div id="monaco-container" class="monaco-host"></div>
+            </div>
+        </div>
+
+        <div class="editor-resizer-h" id="editor-resizer">
+            <span class="resizer-grip resizer-grip-h"></span>
+        </div>
+
+        <div class="result-area">
+            @if (ActiveTab.ParallelResults.Count > 0)
+            {
+                <div class="parallel-results-shell @(_parallelResultsFullscreen ? "parallel-results-shell-fullscreen" : "")"
+                     tabindex="0" @ref="_parallelResultsShellRef" @onkeydown="OnParallelResultsShellKeyDown">
+                    <button type="button" class="parallel-results-fullscreen-btn" @onclick="ToggleParallelResultsFullscreen"
+                            title="@(_parallelResultsFullscreen ? "Sair da tela cheia (Esc)" : "Expandir os resultados simultâneos em tela cheia")">
+                        <span class="toolbar-icon @(_parallelResultsFullscreen ? "icon-collapse" : "icon-expand")"></span>
+                    </button>
+                    <div class="parallel-results @(AppSettings.ParallelResultsHorizontal ? "" : "parallel-results-vertical")">
+                    @for (var slotIndex = 0; slotIndex < ActiveTab.ParallelResults.Count; slotIndex++)
+                    {
+                        var slot = ActiveTab.ParallelResults[slotIndex];
+                        <div @key="slotIndex" class="parallel-result-panel">
+                            <div class="parallel-result-header">
+                                <span class="parallel-result-sql" title="@slot.Sql">@Truncate(slot.Sql, 90)</span>
+                                @if (slot.Running)
+                                {
+                                    <span class="parallel-result-status">Executando...</span>
+                                }
+                                else if (slot.Error is not null)
+                                {
+                                    <span class="parallel-result-status parallel-result-status-error">Erro</span>
+                                }
+                                else if (slot.Result is not null)
+                                {
+                                    <span class="parallel-result-status">
+                                        @(slot.Result.IsResultSet ? $"{slot.Result.Rows.Count} linha(s)" : $"{slot.Result.AffectedRows} linha(s) afetada(s)") · @slot.Result.Elapsed.TotalMilliseconds.ToString("F0") ms
+                                    </span>
+                                }
+                            </div>
+                            @if (slot.Error is not null)
+                            {
+                                <div class="db-alert db-alert-danger parallel-result-error">@slot.Error</div>
+                            }
+                            else if (slot.Result is { IsResultSet: true } pResult)
+                            {
+                                <div class="parallel-result-scroll">
+                                    <table class="result-table">
+                                        <thead>
+                                            <tr>
+                                                <th class="row-number-col">#</th>
+                                                @foreach (var (column, columnIndex) in pResult.Columns.Select((c, i) => (c, i)))
+                                                {
+                                                    <th @key="columnIndex">
+                                                        <span class="column-header-name">@column</span>
+                                                        @if (pResult.ColumnTypes.TryGetValue(column, out var pColumnType))
+                                                        {
+                                                            <span class="column-header-type">@pColumnType</span>
+                                                        }
+                                                    </th>
+                                                }
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @{ var pRowNumber = 0; }
+                                            @foreach (var pRow in pResult.Rows)
+                                            {
+                                                pRowNumber++;
+                                                <tr @key="pRowNumber">
+                                                    <td class="row-number-col">@pRowNumber</td>
+                                                    @foreach (var (column, columnIndex) in pResult.Columns.Select((c, i) => (c, i)))
+                                                    {
+                                                        <td @key="columnIndex" class="@(pRow[column] is null ? "cell-null" : null)">@(pRow[column] ?? "NULL")</td>
+                                                    }
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                            else if (!slot.Running)
+                            {
+                                <div class="parallel-result-empty">Sem linhas de resultado.</div>
+                            }
+                        </div>
+                    }
+                    </div>
+                </div>
+            }
+            else if (ActiveTab.Error is not null)
+            {
+                <div class="db-alert db-alert-danger">
+                    @ActiveTab.Error
+                    @if (ActiveTab.ErrorLine is { } errLine)
+                    {
+                        <span> (linha @errLine)</span>
+                    }
+                </div>
+                @if (!string.IsNullOrWhiteSpace(ActiveTab.LastExecutedSql))
+                {
+                    var errorSqlLines = ActiveTab.LastExecutedSql.Replace("\r\n", "\n").Split('\n');
+                    <div class="error-sql-listing">
+                        @for (var i = 0; i < errorSqlLines.Length; i++)
+                        {
+                            var lineNumber = i + 1;
+                            <div class="error-sql-line @(lineNumber == ActiveTab.ErrorLine ? "error-sql-line-highlight" : "")">
+                                <span class="error-sql-line-number">@lineNumber</span>@errorSqlLines[i]
+                            </div>
+                        }
+                    </div>
+                }
+            }
+
+            @if (ActiveTab.Result is { IsResultSet: true } result)
+            {
+                <div class="db-panel result-panel @(_resultFullscreen ? "result-panel-fullscreen" : "")"
+                     tabindex="0" @ref="_resultPanelRef" @onkeydown="OnResultPanelKeyDown"
+                     @oncopy="OnResultPanelCopyAsync" @oncopy:preventDefault="@(_selectedColumn is not null && _editingCell is null)">
+                    @if (_resultFullscreen)
+                    {
+                        <div class="result-panel-header">
+                            <div class="result-panel-header-title">
+                                <span class="result-header-icon"></span>
+                                <h2>Dados para análise</h2>
+                            </div>
+                            <button class="result-panel-close-btn" @onclick="ToggleResultFullscreen" title="Sair da tela cheia (Esc)">
+                                <span class="toolbar-icon icon-close"></span>
+                            </button>
+                        </div>
+                    }
+                    <div class="result-scroll">
+                        <table class="result-table @(ActiveTab.EditContext is not null ? "result-table-editable" : "") @(_allSelected ? "table-all-selected" : "")" id="result-table">
+                            <thead>
+                                <tr>
+                                    @if (ActiveTab.EditContext is not null)
+                                    {
+                                        <th class="row-delete-col" title="Marca/desmarca a linha pra excluir"></th>
+                                    }
+                                    <th class="row-number-col" title="Selecionar tabela inteira" @onclick="SelectAllTable">#</th>
+                                    @foreach (var (column, columnIndex) in result.Columns.Select((c, i) => (c, i)))
+                                    {
+                                        <th @key="columnIndex" class="@(_selectedColumn == column ? "column-selected" : "")" title="Clique pra selecionar a coluna"
+                                            @onclick="() => SelectColumn(column)"
+                                            @oncontextmenu="(e) => ShowColumnContextMenu(e, column)" @oncontextmenu:preventDefault="true">
+                                            <div class="column-header-cell">
+                                                <span class="column-header-text">
+                                                    <span class="column-header-name">@column</span>
+                                                    @if (result.ColumnTypes.TryGetValue(column, out var columnType))
+                                                    {
+                                                        <span class="column-header-type">@columnType</span>
+                                                    }
+                                                </span>
+                                                <button type="button" class="column-sort-btn" title="Ordenar por esta coluna"
+                                                        @onclick="() => SortBy(column)" @onclick:stopPropagation="true">
+                                                    <span class="column-sort-icon @(_sortColumn == column ? (_sortAscending ? "column-sort-icon-asc" : "column-sort-icon-desc") : "")"></span>
+                                                </button>
+                                            </div>
+                                        </th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @{ var rowNumber = 0; }
+                                @foreach (var (rowIndex, row) in SortedRows(result))
+                                {
+                                    rowNumber++;
+                                    var markedForDelete = ActiveTab.PendingDeletes.Contains(rowIndex);
+                                    var hasPendingEdit = ActiveTab.PendingEdits.ContainsKey(rowIndex);
+                                    <tr @key="rowIndex" class="@(markedForDelete ? "row-marked-delete" : hasPendingEdit ? "row-marked-edit" : "")">
+                                        @if (ActiveTab.EditContext is not null)
+                                        {
+                                            <td class="row-delete-col">
+                                                <button class="row-delete-btn @(markedForDelete ? "active" : "")"
+                                                        title="@(markedForDelete ? "Desmarcar exclusão" : "Marcar linha pra excluir")"
+                                                        @onclick="() => ToggleDeleteRow(ActiveTab, rowIndex)">
+                                                    ×
+                                                </button>
+                                            </td>
+                                        }
+                                        <td class="row-number-col">@rowNumber</td>
+                                        @foreach (var (column, columnIndex) in result.Columns.Select((c, i) => (c, i)))
+                                        {
+                                            var pendingEdited = ActiveTab.PendingEdits.TryGetValue(rowIndex, out var rowEdits) && rowEdits.ContainsKey(column);
+                                            var value = pendingEdited ? rowEdits![column] : row[column];
+                                            var editable = ActiveTab.EditContext is not null && !markedForDelete;
+                                            if (editable && _editingCell is { } editing && editing.RowIndex == rowIndex && editing.Column == column)
+                                            {
+                                                <td @key="columnIndex" class="cell-editing @(_selectedColumn == column ? "column-selected" : "")">
+                                                    <input class="cell-edit-input" value="@_editingValue"
+                                                           @oninput="(e) => _editingValue = e.Value?.ToString() ?? string.Empty"
+                                                           @onblur="() => CommitCellEdit(ActiveTab, rowIndex, column, row[column])"
+                                                           @onkeydown="(e) => OnCellEditKeyDown(e, ActiveTab, rowIndex, column, row[column])"
+                                                           @ref="_editingInputRef" />
+                                                </td>
+                                            }
+                                            else
+                                            {
+                                                <td @key="columnIndex" class="@(value is null ? "cell-null" : null) @(pendingEdited ? "cell-pending-edit" : null) @(editable ? "cell-editable" : null) @(_selectedColumn == column ? "column-selected" : null)"
+                                                    @ondblclick="() => OnCellDoubleClick(rowIndex, column, value, editable)">
+                                                    @(value ?? "NULL")
+                                                </td>
+                                            }
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="result-toolbar">
+                        <label class="grid-edit-toggle @(ActiveTab.EditContext is not null ? "grid-edit-toggle-on" : "")"
+                               title="@(ActiveTab.EditContext is not null ? "Desliga a edição direta na grid" : "Liga a edição direta na grid (duplo clique numa célula pra editar, × na linha pra marcar exclusão)")">
+                            <input type="checkbox" checked="@(ActiveTab.EditContext is not null)" disabled="@_resolvingEditContext" @onchange="ToggleGridEditAsync" />
+                            <span class="grid-edit-toggle-track"><span class="grid-edit-toggle-thumb"></span></span>
+                            <span class="toolbar-icon icon-edit-grid"></span>
+                            <span>@(_resolvingEditContext ? "Verificando..." : "Editar grid")</span>
+                        </label>
+                        <button class="export-icon-btn toolbar-btn-sm" @onclick="ExportToExcel" disabled="@_exporting" title="Exportar para Excel">
+                            <svg class="export-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M5 2h9l5 5v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="#1E7145" />
+                                <path d="M14 2v5h5" fill="#0f5132" />
+                                <text x="12" y="17.5" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="9" font-weight="700" fill="#fff">X</text>
+                            </svg>
+                            <span>@(_exporting ? "Exportando..." : "Exportar")</span>
+                        </button>
+                        @if (_exportMessage is not null)
+                        {
+                            <span class="export-message">@_exportMessage</span>
+                        }
+                        @if (ActiveTab.EditContext is not null)
+                        {
+                            var pendingCount = ActiveTab.PendingDeletes.Count + ActiveTab.PendingEdits.Keys.Count(k => !ActiveTab.PendingDeletes.Contains(k));
+                            @if (ActiveTab.EditContext.IsSyntheticKey)
+                            {
+                                <span class="grid-synthetic-key-tag" title="Esta tabela não tem chave primária nem índice único cadastrado, então o UPDATE/DELETE usa todas as colunas pra identificar a linha. Se houver linhas realmente duplicadas, a alteração pode afetar mais de uma.">
+                                    ⚠ sem chave única
+                                </span>
+                            }
+                            <button class="db-btn db-btn-ghost db-btn-success grid-save-btn toolbar-btn-sm" @onclick="SaveGridChangesAsync" disabled="@(_savingGrid || (pendingCount == 0 && _editingCell is null))" title="Aplica as edições/exclusões pendentes na grid">
+                                <span class="toolbar-icon icon-commit"></span>
+                                @(_savingGrid ? "Salvando..." : $"Salvar ({pendingCount})")
+                            </button>
+                            <button class="db-btn db-btn-ghost db-btn-danger grid-cancel-btn toolbar-btn-sm" @onclick="CancelGridEditsAsync" disabled="@(_savingGrid || (pendingCount == 0 && _editingCell is null))" title="Descarta as edições/exclusões pendentes (continua no modo de edição)">
+                                <span class="toolbar-icon icon-close"></span>
+                                Cancelar
+                            </button>
+                            @if (_gridSaveMessage is not null)
+                            {
+                                <span class="export-message">@_gridSaveMessage</span>
+                            }
+                        }
+                        else if (ActiveTab.EditDisabledReason is not null)
+                        {
+                            <span class="grid-readonly-reason" title="Por que essa grid não é editável">🔒 @ActiveTab.EditDisabledReason</span>
+                        }
+                        <button class="db-btn db-btn-ghost result-fullscreen-btn toolbar-btn-sm" @onclick="ToggleResultFullscreen"
+                                title="@(_resultFullscreen ? "Sair da tela cheia (Esc)" : "Expandir a tabela em tela cheia pra análise de dados")">
+                            <span class="toolbar-icon @(_resultFullscreen ? "icon-collapse" : "icon-expand")"></span>
+                            @(_resultFullscreen ? "Sair da tela cheia" : "Tela cheia")
+                        </button>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="status-bar">
+            @if (ActiveTab.Running)
+            {
+                <span>Executando...</span>
+            }
+            else if (ActiveTab.Result is not null)
+            {
+                <span>@ActiveTab.Result.Elapsed.TotalMilliseconds.ToString("F0") ms</span>
+                @if (ActiveTab.Result.IsResultSet)
+                {
+                    <span>@ActiveTab.Result.Rows.Count linha(s) retornada(s)</span>
+                }
+                else
+                {
+                    <span>@ActiveTab.Result.AffectedRows linha(s) afetada(s)</span>
+                }
+            }
+            else
+            {
+                <span>Pronto</span>
+            }
+            @if (!ActiveTab.AutoCommit)
+            {
+                <span class="status-bar-txn @(HasPendingTransaction(ActiveTab.Id) ? "status-bar-txn-open" : "")">
+                    @(HasPendingTransaction(ActiveTab.Id) ? "Transação aberta" : "Modo manual — sem transação aberta")
+                </span>
+            }
+        </div>
+    }
+
+    @if (_historyOpen)
+    {
+        <div class="history-backdrop" @onclick="ToggleHistory"></div>
+        <div class="history-drawer">
+            <div class="history-drawer-header">
+                <div class="history-drawer-header-title">
+                    <span class="history-header-icon"></span>
+                    <h2>Histórico</h2>
+                </div>
+                <button type="button" class="result-panel-close-btn" title="Fechar" @onclick="ToggleHistory">
+                    <span class="toolbar-icon icon-close"></span>
+                </button>
+            </div>
+            <div class="history-search">
+                <span class="toolbar-icon icon-search history-search-icon"></span>
+                <input class="db-input history-search-input" type="text" placeholder="Buscar por palavra-chave no SQL..."
+                       value="@_historySearch" @oninput="OnHistorySearchInput" />
+                @if (!string.IsNullOrEmpty(_historySearch))
+                {
+                    <button type="button" class="history-search-clear" title="Limpar busca" @onclick="ClearHistorySearch">
+                        <span class="toolbar-icon icon-close"></span>
+                    </button>
+                }
+            </div>
+            <div class="history-list">
+                @{ var filteredHistory = FilteredHistory.ToList(); }
+                @if (_history.Count == 0)
+                {
+                    <p class="history-empty">Nenhuma execução registrada ainda para esta conexão.</p>
+                }
+                else if (filteredHistory.Count == 0)
+                {
+                    <p class="history-empty">Nenhum resultado para "@_historySearch".</p>
+                }
+                else
+                {
+                    @if (!string.IsNullOrEmpty(_historySearch))
+                    {
+                        <div class="history-count">@filteredHistory.Count de @_history.Count execuç@(filteredHistory.Count == 1 ? "ão" : "ões")</div>
+                    }
+                    @foreach (var entry in filteredHistory)
+                    {
+                        <div class="history-item @(entry.Success ? "" : "history-item-error")" @onclick="() => OpenFromHistory(entry)">
+                            <div class="history-sql">@Truncate(entry.Sql)</div>
+                            <div class="history-meta">
+                                <span>@entry.ExecutedAtUtc.ToLocalTime().ToString("dd/MM HH:mm:ss")</span>
+                                <span>@entry.DurationMs.ToString("F0") ms</span>
+                                @if (entry.Success)
+                                {
+                                    <span>@(entry.RowCount) linha(s)</span>
+                                }
+                                else
+                                {
+                                    <span class="history-error-tag">erro</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    }
+
+    @if (_columnContextMenu is not null)
+    {
+        var (cmX, cmY, cmColumn) = _columnContextMenu.Value;
+        <div class="context-menu-backdrop" @onclick="CloseColumnContextMenu" @oncontextmenu="CloseColumnContextMenu" @oncontextmenu:preventDefault="true"></div>
+        <ul class="context-menu" style="left:@(cmX)px; top:@(cmY)px;">
+            <li><button @onclick="() => CopyColumnNameAsync(cmColumn)">Copiar nome da coluna</button></li>
+        </ul>
+    }
+
+    @if (_errorModalOpen && ActiveTab?.Error is not null)
+    {
+        <QueryErrorModal ErrorMessage="@ActiveTab.Error" ErrorLine="@ActiveTab.ErrorLine" Sql="@ActiveTab.LastExecutedSql" OnClose="CloseErrorModal" />
+    }
+
+    <ConfirmDialog @ref="_confirmDialog" />
+</div>
+
+@code {
+    private bool _historyOpen;
+    private bool _monacoInitialized;
+    private bool _exporting;
+    private string? _exportMessage;
+    private string? _sortColumn;
+    private bool _sortAscending = true;
+    private string? _selectedColumn;
+    private bool _allSelected;
+    private (double X, double Y, string Column)? _columnContextMenu;
+    private List<ConnectionProfile> _profiles = new();
+    private IReadOnlyList<QueryHistoryEntry> _history = Array.Empty<QueryHistoryEntry>();
+    private string _historySearch = string.Empty;
+    private DotNetObjectReference<QueryTabsPanel>? _selfRef;
+    private DotNetObjectReference<SqlCompletionService>? _completionServiceRef;
+
+    private (int RowIndex, string Column)? _editingCell;
+    private string _editingValue = string.Empty;
+    private ElementReference _editingInputRef;
+    private bool _focusEditInputPending;
+    private bool _savingGrid;
+    private string? _gridSaveMessage;
+    private bool _resolvingEditContext;
+    private ConfirmDialog? _confirmDialog;
+    private bool _errorModalOpen;
+
+    private bool _savingSqlFile;
+    private string? _saveSqlMessage;
+
+    private bool _resultFullscreen;
+    private ElementReference _resultPanelRef;
+    private bool _focusResultPanelPending;
+
+    private bool _parallelResultsFullscreen;
+    private ElementReference _parallelResultsShellRef;
+    private bool _focusParallelResultsPending;
+
+    private QueryTabModel? ActiveTab => TabState.GetActive();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _profiles = (await ProfileStore.GetAllAsync()).ToList();
+        TabState.Changed += HandleTabStateChanged;
+    }
+
+    private ConnectionProfile? ProfileFor(string id) => _profiles.FirstOrDefault(p => p.Id == id);
+
+    /// <summary>Chamado pelo Workspace sempre que a árvore abre uma tabela/conexão nova, pra manter o cache de perfis atualizado.</summary>
+    public async Task RefreshProfilesAsync()
+    {
+        _profiles = (await ProfileStore.GetAllAsync()).ToList();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // O container só existe no DOM quando há uma aba ativa (@if (ActiveTab is not null)),
+        // então não dá pra inicializar o Monaco só no "primeiro render" do Blazor — a primeira vez
+        // que o componente renderiza costuma ser sem nenhuma aba aberta ainda.
+        if (!_monacoInitialized && ActiveTab is not null)
+        {
+            _selfRef ??= DotNetObjectReference.Create(this);
+            _completionServiceRef ??= CompletionService.CreateReference();
+            await JS.InvokeVoidAsync("developtiMonaco.init", "monaco-container", _completionServiceRef, _selfRef);
+            await JS.InvokeVoidAsync("developtiResizer.initVertical", "editor-resizer", "monaco-container", new { min = 120, max = 700 });
+            _monacoInitialized = true;
+        }
+
+        await SyncActiveModelAsync();
+
+        if (_focusEditInputPending)
+        {
+            _focusEditInputPending = false;
+            // Cursor no INÍCIO do campo, não no fim — senão um valor com muitos caracteres abre
+            // já rolado pro fim do texto e a pessoa "perde" o começo do valor original.
+            try { await JS.InvokeVoidAsync("developtiTable.focusInputStart", _editingInputRef); } catch { /* input pode já ter saído do DOM */ }
+        }
+
+        if (_focusResultPanelPending)
+        {
+            _focusResultPanelPending = false;
+            try { await _resultPanelRef.FocusAsync(); } catch { /* painel pode já ter saído do DOM */ }
+        }
+
+        if (_focusParallelResultsPending)
+        {
+            _focusParallelResultsPending = false;
+            try { await _parallelResultsShellRef.FocusAsync(); } catch { /* painel pode já ter saído do DOM */ }
+        }
+    }
+
+    private void ToggleResultFullscreen()
+    {
+        _resultFullscreen = !_resultFullscreen;
+        if (_resultFullscreen)
+        {
+            _focusResultPanelPending = true; // pro Esc funcionar sem precisar clicar na tabela antes
+        }
+    }
+
+    private void OnResultPanelKeyDown(KeyboardEventArgs e)
+    {
+        if (_resultFullscreen && e.Key == "Escape")
+        {
+            _resultFullscreen = false;
+        }
+    }
+
+    /// <summary>Expande os resultados da execução simultânea (até 3, lado a lado ou empilhados) em
+    /// tela cheia — as 3 juntas de uma vez, sem precisar escolher uma por uma.</summary>
+    private void ToggleParallelResultsFullscreen()
+    {
+        _parallelResultsFullscreen = !_parallelResultsFullscreen;
+        if (_parallelResultsFullscreen)
+        {
+            _focusParallelResultsPending = true; // pro Esc funcionar sem precisar clicar antes
+        }
+    }
+
+    private void OnParallelResultsShellKeyDown(KeyboardEventArgs e)
+    {
+        if (_parallelResultsFullscreen && e.Key == "Escape")
+        {
+            _parallelResultsFullscreen = false;
+        }
+    }
+
+    private string? _lastSyncedTabId;
+
+    private async Task SyncActiveModelAsync()
+    {
+        if (!_monacoInitialized) return;
+        var tab = ActiveTab;
+        if (tab is null || tab.Id == _lastSyncedTabId) return;
+
+        await JS.InvokeVoidAsync("developtiMonaco.setActiveTab", tab.Id, tab.InitialSql, tab.ConnectionProfileId);
+        tab.ModelReady = true;
+        _lastSyncedTabId = tab.Id;
+    }
+
+    private void HandleTabStateChanged()
+    {
+        _lastSyncedTabId = null; // força re-sincronizar o model do Monaco no próximo render
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ActivateTab(string id)
+    {
+        TabState.SetActive(id);
+        _sortColumn = null;
+        _selectedColumn = null;
+        _allSelected = false;
+        _columnContextMenu = null; // menu de coluna é da grid da aba anterior — não faz sentido continuar aberto (e o backdrop dele cobre a tela inteira)
+        _errorModalOpen = false; // erro é por execução — não reabrir o modal pro erro antigo de outra aba
+        await SyncActiveModelAsync();
+    }
+
+    private void CloseErrorModal() => _errorModalOpen = false;
+
+    private void SortBy(string column)
+    {
+        if (_sortColumn == column)
+        {
+            _sortAscending = !_sortAscending;
+        }
+        else
+        {
+            _sortColumn = column;
+            _sortAscending = true;
+        }
+    }
+
+    /// <summary>Clique em qualquer parte do cabeçalho (fora do ícone de ordenação) só seleciona a
+    /// coluna — destaca header + todas as células dela, sem alterar a ordenação.</summary>
+    private void SelectColumn(string column)
+    {
+        _selectedColumn = column;
+        _allSelected = false;
+        // Foca o painel pra garantir que o Ctrl+C seguinte dispare o OnResultPanelCopyAsync abaixo em
+        // vez de ser capturado por outro elemento com foco (ex: o editor Monaco).
+        _focusResultPanelPending = true;
+    }
+
+    /// <summary>Clique no "#" seleciona a tabela inteira — destaca todas as células (mesmo visual da
+    /// seleção de coluna) e ainda dispara a seleção nativa do navegador, pra dar pra copiar com Ctrl+C.</summary>
+    private async Task SelectAllTable()
+    {
+        _selectedColumn = null;
+        _allSelected = true;
+        _focusResultPanelPending = true;
+        await JS.InvokeVoidAsync("developtiTable.selectAll", "result-table");
+    }
+
+    /// <summary>Uma coluna do resultado não é um intervalo contíguo no DOM (as células dela ficam
+    /// espalhadas entre linhas), então a seleção nativa do navegador não consegue restringir a cópia
+    /// só a ela — daí o Ctrl+C precisa ser interceptado aqui e o texto montado manualmente a partir dos
+    /// dados da coluna selecionada (respeitando ordenação e edições pendentes na grid).</summary>
+    private async Task OnResultPanelCopyAsync()
+    {
+        var column = _selectedColumn;
+        if (column is null || _editingCell is not null || ActiveTab?.Result is not { IsResultSet: true } result) return;
+
+        var lines = SortedRows(result).Select(r =>
+        {
+            var pendingEdited = ActiveTab.PendingEdits.TryGetValue(r.Index, out var rowEdits) && rowEdits.ContainsKey(column);
+            var value = pendingEdited ? rowEdits![column] : r.Row.GetValueOrDefault(column);
+            return value?.ToString() ?? "NULL";
+        });
+
+        await Clipboard.Default.SetTextAsync(string.Join(Environment.NewLine, lines));
+    }
+
+    private void ShowColumnContextMenu(MouseEventArgs e, string column)
+    {
+        _columnContextMenu = (e.ClientX, e.ClientY, column);
+    }
+
+    private void CloseColumnContextMenu()
+    {
+        _columnContextMenu = null;
+    }
+
+    private async Task CopyColumnNameAsync(string column)
+    {
+        CloseColumnContextMenu();
+        await Clipboard.Default.SetTextAsync(column);
+    }
+
+    /// <summary>Devolve (índice original em result.Rows, linha) — o índice original é a identidade
+    /// estável usada em PendingEdits/PendingDeletes, já que a ordenação por coluna não pode embaralhar
+    /// qual linha corresponde a qual edição pendente.</summary>
+    private IEnumerable<(int Index, Dictionary<string, object?> Row)> SortedRows(QueryResult result)
+    {
+        var indexed = result.Rows.Select((row, index) => (Index: index, Row: row));
+        if (_sortColumn is null)
+        {
+            return indexed;
+        }
+
+        var column = _sortColumn;
+        return _sortAscending
+            ? indexed.OrderBy(r => r.Row.GetValueOrDefault(column), CellValueComparer.Instance)
+            : indexed.OrderByDescending(r => r.Row.GetValueOrDefault(column), CellValueComparer.Instance);
+    }
+
+    private sealed class CellValueComparer : IComparer<object?>
+    {
+        public static readonly CellValueComparer Instance = new();
+
+        public int Compare(object? x, object? y)
+        {
+            if (x is null && y is null) return 0;
+            if (x is null) return -1;
+            if (y is null) return 1;
+            if (x is IComparable comparable && x.GetType() == y.GetType())
+            {
+                return comparable.CompareTo(y);
+            }
+            return string.Compare(x.ToString(), y.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private void OnCellDoubleClick(int rowIndex, string column, object? currentValue, bool editable)
+    {
+        if (!editable) return;
+        _editingCell = (rowIndex, column);
+        _editingValue = currentValue?.ToString() ?? string.Empty;
+        _focusEditInputPending = true;
+    }
+
+    private void CommitCellEdit(QueryTabModel tab, int rowIndex, string column, object? originalValue)
+    {
+        if (_editingCell is null) return;
+        _editingCell = null;
+
+        var originalAsString = originalValue?.ToString() ?? string.Empty;
+        if (!tab.PendingEdits.TryGetValue(rowIndex, out var edits))
+        {
+            edits = new Dictionary<string, object?>();
+        }
+
+        if (string.Equals(_editingValue, originalAsString, StringComparison.Ordinal))
+        {
+            edits.Remove(column);
+        }
+        else
+        {
+            edits[column] = CoerceEditedValue(_editingValue, originalValue);
+        }
+
+        if (edits.Count == 0)
+        {
+            tab.PendingEdits.Remove(rowIndex);
+        }
+        else
+        {
+            tab.PendingEdits[rowIndex] = edits;
+        }
+
+        StateHasChanged();
+    }
+
+    private void OnCellEditKeyDown(KeyboardEventArgs e, QueryTabModel tab, int rowIndex, string column, object? originalValue)
+    {
+        switch (e.Key)
+        {
+            case "Enter":
+                CommitCellEdit(tab, rowIndex, column, originalValue);
+                break;
+            case "Escape":
+                _editingCell = null;
+                StateHasChanged();
+                break;
+        }
+    }
+
+    /// <summary>Converte o texto digitado pro mesmo tipo CLR do valor original da célula (int, decimal,
+    /// DateTime, bool...), já que o parâmetro precisa bater com o tipo da coluna no banco. Texto vazio
+    /// vira NULL. Se a conversão falhar, manda o texto puro mesmo — o banco reclama com um erro claro.</summary>
+    private static object? CoerceEditedValue(string input, object? originalValue)
+    {
+        if (string.IsNullOrEmpty(input)) return null;
+        if (originalValue is null) return input;
+
+        try
+        {
+            return originalValue switch
+            {
+                DateTime => DateTime.Parse(input, System.Globalization.CultureInfo.CurrentCulture),
+                bool => bool.Parse(input),
+                _ => Convert.ChangeType(input, originalValue.GetType(), System.Globalization.CultureInfo.InvariantCulture)
+            };
+        }
+        catch
+        {
+            return input;
+        }
+    }
+
+    private void ToggleDeleteRow(QueryTabModel tab, int rowIndex)
+    {
+        if (!tab.PendingDeletes.Remove(rowIndex))
+        {
+            tab.PendingDeletes.Add(rowIndex);
+            tab.PendingEdits.Remove(rowIndex); // exclusão tem prioridade sobre edição pendente na mesma linha
+            if (_editingCell?.RowIndex == rowIndex) _editingCell = null;
+        }
+        StateHasChanged();
+    }
+
+    private async Task ToggleGridEditAsync()
+    {
+        var tab = ActiveTab;
+        if (tab is null || tab.Result is not { IsResultSet: true }) return;
+
+        if (tab.EditContext is not null)
+        {
+            var pendingCount = tab.PendingDeletes.Count + tab.PendingEdits.Keys.Count(k => !tab.PendingDeletes.Contains(k));
+            if (pendingCount > 0)
+            {
+                var confirmed = _confirmDialog is not null && await _confirmDialog.ShowAsync(
+                    "Desligar edição da grid",
+                    $"Você tem {pendingCount} alteração(ões) não salva(s) na grid. Desligar descarta essas alterações (nada é enviado ao banco).",
+                    confirmLabel: "Desligar mesmo assim", danger: true);
+                if (!confirmed) return;
+            }
+
+            tab.EditContext = null;
+            tab.EditDisabledReason = null;
+            tab.PendingEdits.Clear();
+            tab.PendingDeletes.Clear();
+            _editingCell = null;
+            _gridSaveMessage = null;
+            StateHasChanged();
+            return;
+        }
+
+        var profile = ProfileFor(tab.ConnectionProfileId);
+        if (profile is null) return;
+
+        _resolvingEditContext = true;
+        StateHasChanged();
+        try
+        {
+            var resolution = await GridEditService.ResolveEditContextAsync(profile, tab.LastExecutedSql);
+            tab.EditContext = resolution.Context;
+            tab.EditDisabledReason = resolution.Reason;
+        }
+        catch (Exception ex)
+        {
+            // Sem isso, qualquer falha fora do try/catch interno do GridEditService (ex: GetPasswordAsync)
+            // sobe como exceção não tratada e derruba a página inteira (banner "Ocorreu um erro inesperado"),
+            // sem dar nenhuma pista do que aconteceu — melhor mostrar o motivo no mesmo lugar onde a grid
+            // já explica por que não pode ficar editável.
+            tab.EditContext = null;
+            tab.EditDisabledReason = $"Erro ao verificar: {ex.Message}";
+        }
+        finally
+        {
+            _resolvingEditContext = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveGridChangesAsync()
+    {
+        var tab = ActiveTab;
+        if (tab?.EditContext is null || tab.Result is not { IsResultSet: true } result) return;
+
+        // Clicar em Salvar com uma célula ainda em edição (sem ter dado Tab/clicado fora antes) não dá
+        // tempo do @onblur confirmar a edição antes deste clique ser processado — commita aqui primeiro,
+        // senão a alteração mais recente ficava de fora da contagem (ou nem chegava a ser digitada, já
+        // que sem isso o botão continuava "disabled" no DOM até o blur terminar de rodar).
+        if (_editingCell is { } editing)
+        {
+            CommitCellEdit(tab, editing.RowIndex, editing.Column, result.Rows[editing.RowIndex][editing.Column]);
+        }
+
+        var editCount = tab.PendingEdits.Keys.Count(k => !tab.PendingDeletes.Contains(k));
+        var deleteCount = tab.PendingDeletes.Count;
+        if (editCount == 0 && deleteCount == 0) return;
+
+        var profile = ProfileFor(tab.ConnectionProfileId);
+        if (profile is null) return;
+
+        var parts = new List<string>();
+        if (editCount > 0) parts.Add($"{editCount} atualização(ões)");
+        if (deleteCount > 0) parts.Add($"{deleteCount} exclusão(ões)");
+        var confirmed = _confirmDialog is not null && await _confirmDialog.ShowAsync(
+            "Salvar alterações",
+            $"Confirma aplicar {editCount + deleteCount} alteração(ões) em {tab.EditContext.Schema}.{tab.EditContext.Table} ({string.Join(", ", parts)})?",
+            confirmLabel: "Salvar", danger: deleteCount > 0);
+        if (!confirmed) return;
+
+        _savingGrid = true;
+        _gridSaveMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var affected = await GridEditService.SaveChangesAsync(
+                tab.Id, profile, tab.EditContext, result.Rows, tab.PendingEdits, tab.PendingDeletes, tab.AutoCommit);
+
+            // Reflete o que foi salvo direto em result.Rows — sem isso a grid só mostra o valor novo
+            // enquanto a edição está "pendente" (sobreposta em memória) e volta ao valor antigo assim
+            // que os dicionários de pendência são limpos, obrigando a rodar a consulta de novo pra ver.
+            foreach (var (rowIndex, changes) in tab.PendingEdits)
+            {
+                if (tab.PendingDeletes.Contains(rowIndex)) continue;
+                var row = result.Rows[rowIndex];
+                foreach (var (column, newValue) in changes)
+                {
+                    row[column] = newValue;
+                }
+            }
+
+            foreach (var rowIndex in tab.PendingDeletes.OrderByDescending(i => i))
+            {
+                result.Rows.RemoveAt(rowIndex);
+            }
+
+            tab.PendingEdits.Clear();
+            tab.PendingDeletes.Clear();
+            _gridSaveMessage = tab.AutoCommit
+                ? $"{affected} linha(s) salva(s)."
+                : $"{affected} linha(s) salva(s) — pendente de Commit.";
+
+            // Só pergunta se ainda tem algo pendente de confirmar (auto-commit já confirma sozinho).
+            if (!tab.AutoCommit && _confirmDialog is not null)
+            {
+                var commitNow = await _confirmDialog.ShowAsync(
+                    "Confirmar agora?",
+                    $"{affected} linha(s) salva(s) em {tab.EditContext.Schema}.{tab.EditContext.Table}, ainda não confirmadas. Quer dar Commit agora?",
+                    confirmLabel: "Commit", cancelLabel: "Deixar pendente");
+                if (commitNow)
+                {
+                    await CommitAsync(tab);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _gridSaveMessage = $"Falha ao salvar: {ex.Message}";
+        }
+        finally
+        {
+            _savingGrid = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>Descarta as edições/exclusões pendentes na grid sem desligar o modo de edição —
+    /// diferente do toggle "Editar no grid" (que também sai do modo de edição), este só limpa o
+    /// que ainda não foi salvo, pra a pessoa poder recomeçar a editar na mesma tabela.</summary>
+    private async Task CancelGridEditsAsync()
+    {
+        var tab = ActiveTab;
+        if (tab?.EditContext is null) return;
+
+        var pendingCount = tab.PendingDeletes.Count + tab.PendingEdits.Keys.Count(k => !tab.PendingDeletes.Contains(k));
+        if (pendingCount == 0) return;
+
+        var confirmed = _confirmDialog is not null && await _confirmDialog.ShowAsync(
+            "Cancelar edição",
+            $"Descartar {pendingCount} alteração(ões) não salva(s) na grid? Nada é enviado ao banco.",
+            confirmLabel: "Descartar alterações", danger: true);
+        if (!confirmed) return;
+
+        tab.PendingEdits.Clear();
+        tab.PendingDeletes.Clear();
+        _editingCell = null;
+        _gridSaveMessage = null;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task CloseTab(string id)
+    {
+        var pending = QueryExecutionService.PendingStatementCount(id);
+        if (pending > 0)
+        {
+            var confirmed = _confirmDialog is not null && await _confirmDialog.ShowAsync(
+                "Fechar aba",
+                $"Esta aba tem {pending} comando(s) não confirmado(s). Fechar vai desfazer (Rollback) essas alterações.",
+                confirmLabel: "Fechar mesmo assim", danger: true);
+            if (!confirmed) return;
+        }
+
+        // Mesmo sem nada pendente pra confirmar, uma sessão só-leitura ainda pode ter uma conexão
+        // aberta (ex: só rodou SELECT em modo manual) — libera de qualquer forma.
+        if (QueryExecutionService.HasPendingTransaction(id))
+        {
+            await QueryExecutionService.DiscardSessionAsync(id);
+        }
+
+        await JS.InvokeVoidAsync("developtiMonaco.closeTab", id);
+        TabState.CloseTab(id);
+    }
+
+    /// <summary>Há algo que realmente precisa de Commit/Rollback — SELECTs rodados em modo manual não
+    /// contam, só INSERT/UPDATE/DELETE/TRUNCATE (ver QueryExecutionService.ContainsModifyingStatement).</summary>
+    private bool HasPendingTransaction(string tabId) => QueryExecutionService.PendingStatementCount(tabId) > 0;
+
+    private void OnAutoCommitChanged(ChangeEventArgs e)
+    {
+        var tab = ActiveTab;
+        if (tab is null || HasPendingTransaction(tab.Id)) return;
+
+        tab.AutoCommit = e.Value is bool value && value;
+        StateHasChanged();
+    }
+
+    private async Task CommitAsync(QueryTabModel tab)
+    {
+        try
+        {
+            await QueryExecutionService.CommitAsync(tab.Id);
+            tab.Error = null;
+        }
+        catch (Exception ex)
+        {
+            tab.Error = $"Falha ao confirmar (Commit): {ex.Message}";
+        }
+        StateHasChanged();
+    }
+
+    private async Task RollbackAsync(QueryTabModel tab)
+    {
+        try
+        {
+            await QueryExecutionService.RollbackAsync(tab.Id);
+            tab.Error = null;
+        }
+        catch (Exception ex)
+        {
+            tab.Error = $"Falha ao desfazer (Rollback): {ex.Message}";
+        }
+        StateHasChanged();
+    }
+
+    private void AddBlankTab()
+    {
+        if (ActiveTab is null) return;
+        var profile = ProfileFor(ActiveTab.ConnectionProfileId);
+        var count = TabState.Tabs.Count(t => t.ConnectionProfileId == ActiveTab.ConnectionProfileId) + 1;
+        var title = profile is null ? $"Consulta {count}" : $"{profile.Name}-{count}";
+        TabState.AddTab(ActiveTab.ConnectionProfileId, title);
+    }
+
+    private void OnMaxRowsChanged(ChangeEventArgs e)
+    {
+        if (ActiveTab is not null && int.TryParse(e.Value?.ToString(), out var value) && value > 0)
+        {
+            ActiveTab.MaxRows = value;
+        }
+    }
+
+    private const int MaxParallelQueries = 3;
+
+    private async Task ExecuteAsync()
+    {
+        var tab = ActiveTab;
+        if (tab is null) return;
+
+        // Só entra no modo paralelo quando a pessoa SELECIONA manualmente um trecho com mais de um
+        // statement — sem seleção (ou selecionando um só) cai no fluxo de sempre, sem mudar nada.
+        var selectedStatements = await JS.InvokeAsync<string[]>("developtiMonaco.getSelectedStatements", tab.Id);
+        if (selectedStatements.Length > 1)
+        {
+            await ExecuteMultipleAsync(tab, selectedStatements);
+            return;
+        }
+
+        var sql = await JS.InvokeAsync<string>("developtiMonaco.getExecutionValue", tab.Id);
+        await ExecuteSqlAsync(tab, sql);
+    }
+
+    /// <summary>Roda até <see cref="MaxParallelQueries"/> SELECTs selecionados de uma vez, cada um na
+    /// sua própria conexão (por isso exige Auto-commit — o modo manual usa uma transação/conexão única
+    /// por aba, que não suporta comandos simultâneos), mostrando os resultados lado a lado em vez de
+    /// substituir um pelo outro.</summary>
+    private async Task ExecuteMultipleAsync(QueryTabModel tab, string[] statements)
+    {
+        if (tab.Running) return;
+
+        if (statements.Length > MaxParallelQueries)
+        {
+            if (_confirmDialog is not null)
+            {
+                await _confirmDialog.ShowAsync(
+                    "Muitas consultas selecionadas",
+                    $"Selecione no máximo {MaxParallelQueries} consultas por vez pra rodar ao mesmo tempo (a seleção atual tem {statements.Length}).",
+                    confirmLabel: "OK", showCancel: false);
+            }
+            return;
+        }
+
+        if (!tab.AutoCommit)
+        {
+            if (_confirmDialog is not null)
+            {
+                await _confirmDialog.ShowAsync(
+                    "Auto-commit desligado",
+                    "Rodar várias consultas ao mesmo tempo só funciona com Auto-commit ligado — o modo manual usa uma única transação por aba, que não suporta comandos simultâneos.",
+                    confirmLabel: "OK", showCancel: false);
+            }
+            return;
+        }
+
+        if (statements.Any(global::DevelopTi.Data.Services.QueryExecutionService.ContainsModifyingStatement))
+        {
+            if (_confirmDialog is not null)
+            {
+                await _confirmDialog.ShowAsync(
+                    "Execução simultânea é só leitura",
+                    "Rodar várias consultas ao mesmo tempo só vale pra SELECT. Comandos que alteram dados (INSERT/UPDATE/DELETE/TRUNCATE) precisam rodar um de cada vez (Ctrl+Enter).",
+                    confirmLabel: "OK", showCancel: false);
+            }
+            return;
+        }
+
+        var profile = ProfileFor(tab.ConnectionProfileId);
+        if (profile is null)
+        {
+            tab.Error = "Conexão desta aba não foi encontrada (pode ter sido excluída).";
+            _errorModalOpen = true;
+            StateHasChanged();
+            return;
+        }
+
+        // Uma execução simultânea nova substitui tanto o resultado único anterior quanto qualquer
+        // execução simultânea anterior — sem misturar resultado velho com os novos.
+        tab.Result = null;
+        tab.Error = null;
+        tab.ClearGridEdits();
+        tab.ParallelResults.Clear();
+        tab.ParallelResults.AddRange(statements.Select(s => new ParallelRunResult { Sql = s }));
+        _parallelResultsFullscreen = false;
+        StateHasChanged();
+
+        var tasks = tab.ParallelResults.Select(async slot =>
+        {
+            var historyEntry = new QueryHistoryEntry
+            {
+                ConnectionProfileId = profile.Id,
+                ConnectionName = profile.Name,
+                Sql = slot.Sql,
+                ExecutedAtUtc = DateTime.UtcNow
+            };
+
+            try
+            {
+                // autoCommit sempre true aqui: cada slot abre sua PRÓPRIA conexão (ver
+                // QueryExecutionService.ExecuteAsync), o que é o que torna a execução simultânea
+                // segura — nada compartilha conexão/transação entre os slots.
+                slot.Result = await QueryExecutionService.ExecuteAsync(tab.Id, profile, slot.Sql, tab.MaxRows, autoCommit: true);
+                historyEntry.Success = true;
+                historyEntry.DurationMs = slot.Result.Elapsed.TotalMilliseconds;
+                historyEntry.RowCount = slot.Result.IsResultSet ? slot.Result.Rows.Count : slot.Result.AffectedRows;
+            }
+            catch (Exception ex)
+            {
+                slot.Error = ex.Message;
+                historyEntry.Success = false;
+                historyEntry.ErrorMessage = ex.Message;
+            }
+            finally
+            {
+                slot.Running = false;
+                await InvokeAsync(StateHasChanged); // mostra cada resultado assim que ele terminar, sem esperar os outros
+            }
+
+            await HistoryStore.AddAsync(historyEntry);
+        });
+
+        await Task.WhenAll(tasks);
+
+        if (_historyOpen)
+        {
+            await LoadHistoryAsync();
+        }
+    }
+
+    /// <summary>Chamado pelo JS (Ctrl+Enter no Monaco) pra rodar só o statement onde o cursor está,
+    /// permitindo empilhar várias consultas no mesmo editor.</summary>
+    [JSInvokable]
+    public async Task ExecuteStatementFromEditorAsync(string tabId, string sql)
+    {
+        var tab = TabState.Tabs.FirstOrDefault(t => t.Id == tabId);
+        if (tab is null || string.IsNullOrWhiteSpace(sql)) return;
+
+        if (TabState.ActiveTabId != tabId)
+        {
+            TabState.SetActive(tabId);
+        }
+
+        await ExecuteSqlAsync(tab, sql);
+    }
+
+    /// <summary>Chamado pelo JS (F5/Ctrl+Enter) quando o texto SELECIONADO tem mais de um statement —
+    /// mesmo caminho do botão Executar (ExecuteMultipleAsync), só que disparado pelo atalho.</summary>
+    [JSInvokable]
+    public async Task ExecuteMultipleStatementsFromEditorAsync(string tabId, string[] statements)
+    {
+        var tab = TabState.Tabs.FirstOrDefault(t => t.Id == tabId);
+        if (tab is null || statements is null || statements.Length == 0) return;
+
+        if (TabState.ActiveTabId != tabId)
+        {
+            TabState.SetActive(tabId);
+        }
+
+        await ExecuteMultipleAsync(tab, statements);
+    }
+
+    /// <summary>Chamado pelo JS (F5/Ctrl+Enter) quando não há texto selecionado nem statement
+    /// reconhecível no cursor — evita que o atalho pareça simplesmente não ter feito nada.</summary>
+    [JSInvokable]
+    public async Task NotifyNoStatementToRunAsync()
+    {
+        if (_confirmDialog is not null)
+        {
+            await _confirmDialog.ShowAsync(
+                "Nada para executar",
+                "Não há nenhum comando SQL selecionado, e não foi possível identificar um comando na posição do cursor.",
+                confirmLabel: "OK",
+                showCancel: false);
+        }
+    }
+
+    private async Task ExecuteSqlAsync(QueryTabModel tab, string sql)
+    {
+        if (tab.Running) return;
+
+        var profile = ProfileFor(tab.ConnectionProfileId);
+        if (profile is null)
+        {
+            tab.Error = "Conexão desta aba não foi encontrada (pode ter sido excluída).";
+            _errorModalOpen = true;
+            StateHasChanged();
+            return;
+        }
+
+        // UPDATE/DELETE sem WHERE afeta a tabela inteira — aviso à parte, mais forte que o de
+        // "confirmar execução" genérico, antes até de perguntar isso.
+        if (global::DevelopTi.Data.Services.QueryExecutionService.ContainsUnboundedUpdateOrDelete(sql))
+        {
+            var confirmedNoWhere = _confirmDialog is not null && await _confirmDialog.ShowAsync(
+                "Comando sem cláusula WHERE",
+                "Este UPDATE/DELETE não tem WHERE e vai afetar TODAS as linhas da tabela. Tem certeza que quer continuar?",
+                confirmLabel: "Executar mesmo assim", cancelLabel: "Cancelar", danger: true);
+            if (!confirmedNoWhere) return;
+        }
+        // Pergunta uma vez só por execução, não importa quantas linhas o comando afete.
+        else if (global::DevelopTi.Data.Services.QueryExecutionService.ContainsModifyingStatement(sql))
+        {
+            var confirmed = _confirmDialog is not null && await _confirmDialog.ShowAsync(
+                "Confirmar execução",
+                "Este comando vai alterar dados (INSERT/UPDATE/DELETE/TRUNCATE). Confirma a execução?",
+                confirmLabel: "Executar", danger: true);
+            if (!confirmed) return;
+        }
+
+        tab.Running = true;
+        tab.Error = null;
+        tab.ErrorLine = null;
+        tab.Result = null;
+        tab.ParallelResults.Clear(); // uma execução normal substitui qualquer resultado paralelo anterior
+        _parallelResultsFullscreen = false;
+        tab.LastExecutedSql = sql;
+        tab.ClearGridEdits();
+        _sortColumn = null;
+        _selectedColumn = null;
+        _allSelected = false;
+        _columnContextMenu = null; // menu era da grid do resultado anterior — o backdrop dele cobre a tela inteira
+        _editingCell = null;
+        _gridSaveMessage = null;
+        StateHasChanged();
+
+        var historyEntry = new QueryHistoryEntry
+        {
+            ConnectionProfileId = profile.Id,
+            ConnectionName = profile.Name,
+            Sql = sql,
+            ExecutedAtUtc = DateTime.UtcNow
+        };
+
+        try
+        {
+            tab.Result = await QueryExecutionService.ExecuteAsync(tab.Id, profile, sql, tab.MaxRows, tab.AutoCommit);
+            historyEntry.Success = true;
+            historyEntry.DurationMs = tab.Result.Elapsed.TotalMilliseconds;
+            historyEntry.RowCount = tab.Result.IsResultSet ? tab.Result.Rows.Count : tab.Result.AffectedRows;
+        }
+        catch (Exception ex)
+        {
+            tab.Error = ex.Message;
+            // Só o SQL Server informa a linha de verdade (SqlException.LineNumber, 1-based, dentro do
+            // texto enviado). Oracle/MySQL não expõem isso pelo driver — nesses casos o SQL numerado
+            // abaixo do erro ainda ajuda a localizar visualmente.
+            tab.ErrorLine = ex is Microsoft.Data.SqlClient.SqlException sqlEx ? sqlEx.LineNumber : null;
+            historyEntry.Success = false;
+            historyEntry.ErrorMessage = ex.Message;
+            _errorModalOpen = true;
+        }
+        finally
+        {
+            tab.Running = false;
+        }
+
+        await HistoryStore.AddAsync(historyEntry);
+        if (_historyOpen)
+        {
+            await LoadHistoryAsync();
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task ExportToExcel()
+    {
+        if (ActiveTab?.Result is not { IsResultSet: true } result) return;
+
+        _exporting = true;
+        _exportMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var bytes = ExcelExportService.Export(result);
+            var fileName = $"{ActiveTab.Title}_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+            foreach (var invalidChar in Path.GetInvalidFileNameChars())
+            {
+                fileName = fileName.Replace(invalidChar, '_');
+            }
+
+            var folder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            var path = Path.Combine(folder, fileName);
+            await File.WriteAllBytesAsync(path, bytes);
+
+            _exportMessage = $"Salvo em {path}";
+            await Launcher.Default.OpenAsync(new OpenFileRequest(fileName, new ReadOnlyFile(path)));
+        }
+        catch (Exception ex)
+        {
+            _exportMessage = $"Falha ao exportar: {ex.Message}";
+        }
+        finally
+        {
+            _exporting = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveActiveTabToFileAsync()
+    {
+        var tab = ActiveTab;
+        if (tab is null) return;
+
+        _savingSqlFile = true;
+        _saveSqlMessage = null;
+        StateHasChanged();
+        try
+        {
+            var content = await JS.InvokeAsync<string>("developtiMonaco.getValue", tab.Id);
+            var suggestedName = SanitizeFileName(tab.Title) + ".txt";
+            var saved = await SqlFileService.SaveTextAsync(suggestedName, content);
+            _saveSqlMessage = saved ? "Salvo." : null;
+        }
+        catch (Exception ex)
+        {
+            _saveSqlMessage = $"Falha ao salvar: {ex.Message}";
+        }
+        finally
+        {
+            _savingSqlFile = false;
+        }
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        foreach (var c in Path.GetInvalidFileNameChars())
+        {
+            name = name.Replace(c, '_');
+        }
+        return name;
+    }
+
+    private async Task ToggleHistory()
+    {
+        _historyOpen = !_historyOpen;
+        if (_historyOpen)
+        {
+            _historySearch = string.Empty;
+            await LoadHistoryAsync();
+        }
+    }
+
+    private async Task LoadHistoryAsync()
+    {
+        if (ActiveTab is null) return;
+        _history = await HistoryStore.GetRecentAsync(ActiveTab.ConnectionProfileId, 200);
+    }
+
+    private IEnumerable<QueryHistoryEntry> FilteredHistory =>
+        string.IsNullOrWhiteSpace(_historySearch)
+            ? _history
+            : _history.Where(e =>
+                e.Sql.Contains(_historySearch, StringComparison.OrdinalIgnoreCase) ||
+                (e.ErrorMessage?.Contains(_historySearch, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    private void OnHistorySearchInput(ChangeEventArgs e)
+    {
+        _historySearch = e.Value?.ToString() ?? string.Empty;
+    }
+
+    private void ClearHistorySearch()
+    {
+        _historySearch = string.Empty;
+    }
+
+    private async Task OpenFromHistory(QueryHistoryEntry entry)
+    {
+        TabState.AddTab(entry.ConnectionProfileId, TruncateTitle(entry.Sql), entry.Sql);
+        _historyOpen = false;
+        await SyncActiveModelAsync();
+    }
+
+    private static string Truncate(string sql, int max = 160)
+    {
+        var oneLine = sql.Replace('\n', ' ').Replace('\r', ' ').Trim();
+        return oneLine.Length <= max ? oneLine : oneLine[..max] + "…";
+    }
+
+    private static string TruncateTitle(string sql, int max = 24)
+    {
+        var oneLine = sql.Replace('\n', ' ').Replace('\r', ' ').Trim();
+        return oneLine.Length <= max ? oneLine : oneLine[..max] + "…";
+    }
+
+    public void Dispose()
+    {
+        TabState.Changed -= HandleTabStateChanged;
+        _selfRef?.Dispose();
+        _completionServiceRef?.Dispose();
+    }
+}

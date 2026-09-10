@@ -1,0 +1,50 @@
+<div class="error-modal-backdrop" @onclick="() => OnClose.InvokeAsync()"></div>
+<div class="error-modal-panel" role="alertdialog">
+    <div class="error-modal-header">
+        <div class="error-modal-header-title">
+            <span class="error-modal-icon"></span>
+            <h2>Erro ao executar a consulta</h2>
+        </div>
+        <button type="button" class="error-modal-close-btn" title="Fechar" @onclick="() => OnClose.InvokeAsync()">
+            <span class="error-modal-field-icon icon-close"></span>
+        </button>
+    </div>
+
+    <div class="db-alert db-alert-danger">
+        @ErrorMessage
+        @if (ErrorLine is { } errLine)
+        {
+            <span> (linha @errLine)</span>
+        }
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(Sql))
+    {
+        <p class="error-modal-hint">
+            @(ErrorLine is not null
+                ? "Revise a consulta abaixo — a linha em destaque foi apontada pelo banco como origem do erro."
+                : "Revise a consulta abaixo em busca do problema.")
+        </p>
+        var lines = Sql.Replace("\r\n", "\n").Split('\n');
+        <div class="error-sql-listing">
+            @for (var i = 0; i < lines.Length; i++)
+            {
+                var lineNumber = i + 1;
+                <div class="error-sql-line @(lineNumber == ErrorLine ? "error-sql-line-highlight" : "")">
+                    <span class="error-sql-line-number">@lineNumber</span>@lines[i]
+                </div>
+            }
+        </div>
+    }
+
+    <div class="error-modal-actions">
+        <button type="button" class="db-btn db-btn-primary" @onclick="() => OnClose.InvokeAsync()">Fechar</button>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string ErrorMessage { get; set; } = string.Empty;
+    [Parameter] public int? ErrorLine { get; set; }
+    [Parameter] public string? Sql { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+}
