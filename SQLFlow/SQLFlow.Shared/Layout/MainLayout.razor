@@ -1,0 +1,141 @@
+@inherits LayoutComponentBase
+@using SQLFlow.Shared.Services
+@inject IAppLifecycle AppLifecycle
+
+<div class="app-shell">
+    <header class="app-topbar">
+        <span class="app-brand-mark">
+            <svg class="brand-svg" viewBox="0 0 456 456" aria-hidden="true">
+                <line x1="228" y1="65" x2="228" y2="79" stroke="#ffffff" stroke-width="8" stroke-linecap="round" />
+                <circle cx="228" cy="55" r="10" fill="#ffffff" />
+                <rect x="73" y="162" width="19" height="61" rx="10" fill="#ffffff" fill-opacity="0.85" />
+                <rect x="364" y="162" width="19" height="61" rx="10" fill="#ffffff" fill-opacity="0.85" />
+                <rect x="86" y="79" width="284" height="226" rx="49" fill="#ffffff" />
+                <circle cx="166" cy="176" r="25" fill="#1c2b38" />
+                <circle cx="290" cy="176" r="25" fill="#1c2b38" />
+                <rect x="161" y="227" width="133" height="26" rx="13" fill="#1c2b38" fill-opacity="0.55" />
+                <circle cx="182" cy="366" r="15" fill="#c74634" />
+                <circle cx="228" cy="366" r="15" fill="#0078d4" />
+                <circle cx="274" cy="366" r="15" fill="#00758f" />
+            </svg>
+        </span>
+        <span class="app-brand-name">SQLFlow</span>
+        <span class="app-brand-tagline">Ferramenta de gerenciamento de banco de dados</span>
+    </header>
+
+    <nav class="app-menubar">
+        <div class="app-menu">
+            <button type="button" class="app-menu-trigger" @onclick="ToggleSettingsMenu" @onclick:stopPropagation="true">
+                <span class="app-menu-trigger-icon" aria-hidden="true">⚙</span>
+                Configurações <span class="app-menu-caret" aria-hidden="true">▾</span>
+            </button>
+            @if (_settingsMenuOpen)
+            {
+                <div class="app-menu-dropdown open" @onclick:stopPropagation="true">
+                    <a class="app-menu-item" href="/configuracoes" @onclick="CloseSettingsMenu">
+                        <span class="app-menu-item-icon" aria-hidden="true">◐</span>
+                        Geral
+                    </a>
+                </div>
+            }
+        </div>
+
+        <button type="button" class="app-menu-trigger" @onclick="OpenAbout">
+            <span class="app-menu-trigger-icon" aria-hidden="true">ℹ</span>
+            Sobre
+        </button>
+
+        <button type="button" class="app-menu-trigger app-menu-trigger-exit" @onclick="OpenExitConfirm">
+            <span class="app-menu-trigger-icon" aria-hidden="true">⏻</span>
+            Sair
+        </button>
+    </nav>
+
+    <main class="app-content">
+        @Body
+    </main>
+</div>
+
+@if (_settingsMenuOpen)
+{
+    <div class="app-menu-overlay" @onclick="CloseSettingsMenu"></div>
+}
+
+@if (_aboutOpen)
+{
+    <div class="about-backdrop" @onclick="CloseAbout">
+        <div class="about-dialog" @onclick:stopPropagation="true">
+            <button type="button" class="about-close" title="Fechar" @onclick="CloseAbout">✕</button>
+
+            <div class="about-mark">
+                <svg class="brand-svg" viewBox="0 0 456 456" aria-hidden="true">
+                    <line x1="228" y1="65" x2="228" y2="79" stroke="#ffffff" stroke-width="8" stroke-linecap="round" />
+                    <circle cx="228" cy="55" r="10" fill="#ffffff" />
+                    <rect x="73" y="162" width="19" height="61" rx="10" fill="#ffffff" fill-opacity="0.85" />
+                    <rect x="364" y="162" width="19" height="61" rx="10" fill="#ffffff" fill-opacity="0.85" />
+                    <rect x="86" y="79" width="284" height="226" rx="49" fill="#ffffff" />
+                    <circle cx="166" cy="176" r="25" fill="#1c2b38" />
+                    <circle cx="290" cy="176" r="25" fill="#1c2b38" />
+                    <rect x="161" y="227" width="133" height="26" rx="13" fill="#1c2b38" fill-opacity="0.55" />
+                    <circle cx="182" cy="366" r="15" fill="#c74634" />
+                    <circle cx="228" cy="366" r="15" fill="#0078d4" />
+                    <circle cx="274" cy="366" r="15" fill="#00758f" />
+                </svg>
+            </div>
+            <h2 class="about-title">SQLFlow</h2>
+            <p class="about-version">Versão 1.0</p>
+
+            <p class="about-desc">
+                Sistema para gerenciamento de banco de dados.
+            </p>
+
+            <div class="about-badges">
+                <span class="about-badge">Oracle</span>
+                <span class="about-badge">SQL Server</span>
+                <span class="about-badge">MySQL</span>
+            </div>
+
+            <p class="about-footer">© @DateTime.Now.Year SQLFlow. Todos os direitos reservados.</p>
+        </div>
+    </div>
+}
+
+@if (_exitConfirmOpen)
+{
+    <div class="about-backdrop" @onclick="CloseExitConfirm">
+        <div class="confirm-dialog" @onclick:stopPropagation="true">
+            <h2 class="confirm-title">Sair do SQLFlow?</h2>
+            <p class="confirm-desc">As abas de consulta abertas serão perdidas.</p>
+            <div class="confirm-actions">
+                <button type="button" class="db-btn db-btn-ghost" @onclick="CloseExitConfirm">Cancelar</button>
+                <button type="button" class="db-btn db-btn-primary" @onclick="ConfirmExit">Sair</button>
+            </div>
+        </div>
+    </div>
+}
+
+<div id="blazor-error-ui" data-nosnippet>
+    Ocorreu um erro inesperado.
+    <a href="." class="reload">Recarregar</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    private bool _aboutOpen;
+    private bool _exitConfirmOpen;
+    private bool _settingsMenuOpen;
+
+    private void ToggleSettingsMenu() => _settingsMenuOpen = !_settingsMenuOpen;
+
+    private void CloseSettingsMenu() => _settingsMenuOpen = false;
+
+    private void OpenAbout() => _aboutOpen = true;
+
+    private void CloseAbout() => _aboutOpen = false;
+
+    private void OpenExitConfirm() => _exitConfirmOpen = true;
+
+    private void CloseExitConfirm() => _exitConfirmOpen = false;
+
+    private void ConfirmExit() => AppLifecycle.Exit();
+}

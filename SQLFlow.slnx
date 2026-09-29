@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="SQLFlow/SQLFlow.Data/SQLFlow.Data.csproj" />
+  <Project Path="SQLFlow/SQLFlow.Dialogs/SQLFlow.Dialogs.csproj" />
+  <Project Path="SQLFlow/SQLFlow.Shared/SQLFlow.Shared.csproj" />
+  <Project Path="SQLFlow/SQLFlow.Web.Client/SQLFlow.Web.Client.csproj" />
+  <Project Path="SQLFlow/SQLFlow.Web/SQLFlow.Web.csproj" />
+  <Project Path="SQLFlow/SQLFlow/SQLFlow.csproj" />
+</Solution>

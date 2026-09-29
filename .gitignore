@@ -2,3 +2,6 @@ bin/
 obj/
 .vs/
 *.user
+*.lnk
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

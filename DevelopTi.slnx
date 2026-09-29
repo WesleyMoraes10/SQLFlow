@@ -1,7 +1,0 @@
-<Solution>
-  <Project Path="DevelopTi/DevelopTi.Data/DevelopTi.Data.csproj" />
-  <Project Path="DevelopTi/DevelopTi.Shared/DevelopTi.Shared.csproj" />
-  <Project Path="DevelopTi/DevelopTi.Web.Client/DevelopTi.Web.Client.csproj" />
-  <Project Path="DevelopTi/DevelopTi.Web/DevelopTi.Web.csproj" />
-  <Project Path="DevelopTi/DevelopTi/DevelopTi.csproj" />
-</Solution>

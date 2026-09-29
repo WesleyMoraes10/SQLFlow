@@ -1,4 +1,4 @@
-# DevelopTi
+# SQLFlow
 
 App MAUI Blazor Hybrid para consultar/editar Oracle, SQL Server e MySQL (estilo DBeaver).
 
@@ -16,11 +16,11 @@ não inventar um layout de cabeçalho novo a cada tela nova:
    nunca fundo escuro — o escuro (`--db-navy-800`) é reservado pra status bar/tabela, não pra cabeçalho
    de modal.
 3. Dentro do cabeçalho, da esquerda pra direita:
-   - Um **ícone quadrado 2rem × 2rem, `border-radius: 8px`, fundo azul (`--db-blue-600`)**, com o
+   - Um **ícone quadrado 1.75rem × 1.75rem, `border-radius: 7px`, fundo azul (`--db-blue-600`)**, com o
      glifo em branco centralizado (ou a inicial do banco em maiúscula, se for uma tela ligada a um tipo
      de banco específico — ver `.modal-kind-icon`/`.db-kind-icon` em `DatabaseTree.razor.css`).
-   - O **título** (`<h2>`, `font-size: 1.05rem; font-weight: 600; color: var(--db-gray-900);`).
-   - Um **botão fechar em ícone só** (`×`, sem texto), 1.9rem × 1.9rem, `border-radius: 6px`, fundo
+   - O **título** (`<h2>`, `font-size: 0.95rem; font-weight: 600; color: var(--db-gray-900);`).
+   - Um **botão fechar em ícone só** (`×`, sem texto), 1.6rem × 1.6rem, `border-radius: 6px`, fundo
      transparente, `color: var(--db-gray-400)`, hover com `background: var(--db-gray-100); color:
      var(--db-gray-700);`. Nunca usar link de texto ("Fechar") como no protótipo antigo.
 4. Campos de formulário: cada label vem com um ícone pequeno (0.95rem) à esquerda do texto, na cor
@@ -52,3 +52,37 @@ cabeçalho do painel de resultado em tela cheia em `Components/Workspace/QueryTa
   (`.toolbar-connection`, ex.: "Desenv-Teste"), mesmo essa não sendo um `<button>`. Uma tela nova
   com sua própria toolbar deve seguir o mesmo padrão: uma classe de tamanho só, reaproveitada por
   tudo que estiver naquela barra.
+
+## Deploy (publish para o servidor)
+
+O app é distribuído via pasta de rede: cada máquina roda `iniciar-sqlflow.bat`, que compara o
+arquivo `SQLFlow.dll` (tamanho+data) entre `\\192.168.0.230\wwwroot\SQLFlow` (servidor) e
+`%LOCALAPPDATA%\SQLFlow` (cópia local), só faz `robocopy /MIR` se mudou, e então abre o `.exe`
+local. Ou seja: **atualizar o servidor já é o deploy inteiro** — não tem passo adicional em cada
+máquina, o launcher se encarrega de sincronizar sozinho na próxima abertura.
+
+Pra publicar uma atualização:
+
+```
+dotnet publish SQLFlow.csproj -c Release -f net10.0-windows10.0.19041.0
+```
+
+rodado a partir de `SQLFlow/SQLFlow` (o projeto principal). Gera a saída em
+`SQLFlow/SQLFlow/bin/Release/net10.0-windows10.0.19041.0/win-x64/publish/`. Depois, copia essa
+pasta pro servidor com robocopy **aditivo** (sem `/MIR` — nunca apaga nada que já esteja lá, só
+sobrescreve/adiciona; evita apagar algo do servidor por engano numa publicação parcial):
+
+```
+robocopy "<pasta publish>" "\\192.168.0.230\wwwroot\SQLFlow" /E /MT:16 /R:1 /W:1 /XD "SQLFlow.exe.WebView2" /NFL /NDL /NJH /NP
+```
+
+(`/XD "SQLFlow.exe.WebView2"` exclui a pasta de perfil/cache do WebView2, que não deve estar na
+publicação compartilhada — cada máquina cria a sua própria localmente.)
+
+Exit code 1 do robocopy não é erro — é o código normal pra "um ou mais arquivos copiados com
+sucesso" (só código ≥ 8 é falha de verdade).
+
+Esse é um compartilhamento de **produção**, usado por todas as máquinas que abrem o app — não faz
+backup automático antes de sobrescrever (decisão explícita, pra manter o deploy rápido); se quiser
+uma rede de segurança antes de publicar algo arriscado, copiar a pasta atual do servidor pra um
+`SQLFlow.bak-<data>` antes é responsabilidade de quem publica, não algo automático do processo.

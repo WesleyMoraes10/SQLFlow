@@ -1,0 +1,56 @@
+@if (_visible)
+{
+    <div class="confirm-backdrop" @onclick="ResolveCancel"></div>
+    <div class="confirm-panel @(_danger ? "confirm-panel-danger" : "")" role="alertdialog">
+        <div class="confirm-icon @(_danger ? "confirm-icon-danger" : "confirm-icon-info")"></div>
+        <div class="confirm-body">
+            <h2 class="confirm-title">@_title</h2>
+            <p class="confirm-message">@_message</p>
+            <div class="confirm-actions">
+                @if (_showCancel)
+                {
+                    <button class="db-btn db-btn-ghost" @onclick="ResolveCancel">@_cancelLabel</button>
+                }
+                <button class="db-btn @(_danger ? "db-btn-danger" : "db-btn-primary")" @onclick="ResolveConfirm" autofocus>@_confirmLabel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _visible;
+    private string _title = string.Empty;
+    private string _message = string.Empty;
+    private string _confirmLabel = "Confirmar";
+    private string _cancelLabel = "Cancelar";
+    private bool _danger;
+    private bool _showCancel = true;
+    private TaskCompletionSource<bool>? _tcs;
+
+    /// <summary>Mostra o modal e espera a escolha do usuário — substitui o confirm() nativo do
+    /// navegador (feio e sem estilo) por um modal no visual do app.</summary>
+    public Task<bool> ShowAsync(string title, string message, string confirmLabel = "Confirmar", string cancelLabel = "Cancelar", bool danger = false, bool showCancel = true)
+    {
+        _title = title;
+        _message = message;
+        _confirmLabel = confirmLabel;
+        _cancelLabel = cancelLabel;
+        _danger = danger;
+        _showCancel = showCancel;
+        _visible = true;
+        _tcs = new TaskCompletionSource<bool>();
+        StateHasChanged();
+        return _tcs.Task;
+    }
+
+    private void ResolveConfirm() => Resolve(true);
+    private void ResolveCancel() => Resolve(false);
+
+    private void Resolve(bool result)
+    {
+        _visible = false;
+        _tcs?.TrySetResult(result);
+        _tcs = null;
+        StateHasChanged();
+    }
+}

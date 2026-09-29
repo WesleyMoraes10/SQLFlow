@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Projeto separado SÓ pra isolar o UseWindowsForms: no mesmo csproj do app MAUI, ele colide
+         com o pipeline de XAML do WinUI3 (App.xaml em Platforms/Windows) e o build falha com
+         "MC6000: o arquivo de propriedade deve incluir o assembly .NET Framework 'PresentationCore,
+         PresentationFramework'". Sem nenhum .xaml aqui, esse conflito não existe. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

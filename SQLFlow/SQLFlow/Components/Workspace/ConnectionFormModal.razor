@@ -1,0 +1,222 @@
+@inject IConnectionProfileStore ProfileStore
+@inject ICredentialStore CredentialStore
+@inject IDbConnectionFactory ConnectionFactory
+@inject SqlFileService SqlFileService
+
+<div class="modal-backdrop" @onclick="() => OnClose.InvokeAsync()"></div>
+<div class="modal-panel kind-@_form.Kind.ToString().ToLowerInvariant()">
+    <div class="modal-header">
+        <div class="modal-header-title">
+            <span class="modal-kind-icon kind-@_form.Kind.ToString().ToLowerInvariant()"></span>
+            <h2>@(EditingProfile is null ? "Nova conexão" : $"Editar conexão — {EditingProfile.Name}")</h2>
+        </div>
+        <button type="button" class="modal-close-btn" title="Fechar" @onclick="() => OnClose.InvokeAsync()">
+            <span class="modal-field-icon icon-close"></span>
+        </button>
+    </div>
+
+    @if (_statusMessage is not null)
+    {
+        <div class="db-alert @(_statusIsError ? "db-alert-danger" : "db-alert-success")">@_statusMessage</div>
+    }
+
+    <EditForm Model="_form" OnValidSubmit="Save">
+        <div class="form-section-title">Servidor</div>
+        <div class="form-grid">
+            <label class="form-field">
+                <span class="form-field-label"><span class="modal-field-icon icon-kind"></span>Banco</span>
+                <InputSelect class="db-input" @bind-Value="_form.Kind" @bind-Value:after="OnKindChanged">
+                    @foreach (var kind in Enum.GetValues<DatabaseKind>())
+                    {
+                        <option value="@kind">@kind</option>
+                    }
+                </InputSelect>
+            </label>
+            <label class="form-field">
+                <span class="form-field-label"><span class="modal-field-icon icon-name"></span>Nome</span>
+                <InputText class="db-input" @bind-Value="_form.Name" placeholder="Ex: Mes - Produção" />
+            </label>
+            @if (_form.Kind == DatabaseKind.Sqlite)
+            {
+                <label class="form-field form-field-wide">
+                    <span class="form-field-label"><span class="modal-field-icon icon-file"></span>Arquivo do banco</span>
+                    <div class="form-field-with-button">
+                        <InputText class="db-input" @bind-Value="_form.Host" placeholder="C:\dados\meubanco.db" />
+                        <button type="button" class="db-btn db-btn-ghost" @onclick="PickSqliteFile">Escolher...</button>
+                    </div>
+                    <span class="form-field-hint">Um arquivo que não existir ainda é criado como banco novo.</span>
+                </label>
+            }
+            else
+            {
+                <label class="form-field">
+                    <span class="form-field-label"><span class="modal-field-icon icon-host"></span>Host</span>
+                    <InputText class="db-input" @bind-Value="_form.Host" placeholder="192.168.0.1 ou servidor\instância" />
+                </label>
+                <label class="form-field form-field-narrow">
+                    <span class="form-field-label"><span class="modal-field-icon icon-port"></span>Porta</span>
+                    <InputNumber class="db-input" @bind-Value="_form.Port" />
+                    @if (_form.Kind == DatabaseKind.SqlServer)
+                    {
+                        <span class="form-field-hint">Deixe em branco se o Host tiver uma instância nomeada (ex: SERVIDOR\INSTANCIA) — o SQL Server Browser resolve a porta.</span>
+                    }
+                </label>
+            }
+        </div>
+
+        @if (_form.Kind != DatabaseKind.Sqlite)
+        {
+            <div class="form-section-title">Acesso</div>
+            <div class="form-grid">
+                <label class="form-field">
+                    <span class="form-field-label"><span class="modal-field-icon icon-database"></span>Database / Service Name</span>
+                    <InputText class="db-input" @bind-Value="_form.Database" />
+                </label>
+                <label class="form-field">
+                    <span class="form-field-label"><span class="modal-field-icon icon-user"></span>Usuário</span>
+                    <InputText class="db-input" @bind-Value="_form.Username" />
+                </label>
+                <label class="form-field">
+                    <span class="form-field-label"><span class="modal-field-icon icon-password"></span>Senha</span>
+                    <InputText type="password" class="db-input" @bind-Value="_password" />
+                </label>
+            </div>
+        }
+
+        <div class="form-actions">
+            <button type="button" class="db-btn db-btn-ghost" @onclick="TestConnection" disabled="@_testing">
+                <span class="modal-field-icon icon-plug"></span>
+                @(_testing ? "Testando..." : "Testar conexão")
+            </button>
+            <button type="submit" class="db-btn db-btn-primary">
+                <span class="modal-field-icon icon-check"></span>
+                Salvar
+            </button>
+            <button type="button" class="db-btn db-btn-link" @onclick="() => OnClose.InvokeAsync()">Cancelar</button>
+        </div>
+    </EditForm>
+</div>
+
+@code {
+    [Parameter] public ConnectionProfile? EditingProfile { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    private ConnectionProfileForm _form = new();
+    private string _password = string.Empty;
+    private bool _testing;
+    private string? _statusMessage;
+    private bool _statusIsError;
+
+    protected override void OnInitialized()
+    {
+        if (EditingProfile is not null)
+        {
+            _form = new ConnectionProfileForm
+            {
+                Name = EditingProfile.Name,
+                Kind = EditingProfile.Kind,
+                Host = EditingProfile.Host,
+                Port = EditingProfile.Port,
+                Database = EditingProfile.Database,
+                Username = EditingProfile.Username
+            };
+        }
+    }
+
+    private void OnKindChanged()
+    {
+        // SQL Server pode ficar sem porta (resolvida pelo SQL Server Browser p/ instância nomeada);
+        // SQLite não tem porta (arquivo local). Os demais sempre têm uma porta padrão pra sugerir.
+        _form.Port = _form.Kind is DatabaseKind.SqlServer or DatabaseKind.Sqlite
+            ? null
+            : ConnectionProfile.DefaultPort(_form.Kind);
+    }
+
+    private async Task PickSqliteFile()
+    {
+        try
+        {
+            var path = await SqlFileService.PickSqliteFileAsync();
+            if (path is not null)
+            {
+                _form.Host = path;
+            }
+        }
+        catch (Exception ex)
+        {
+            // Em algumas máquinas o seletor nativo de arquivo do Windows (Windows.Storage.Pickers)
+            // falha (política de grupo, versão do Windows etc.) — sem esse catch, a exceção não
+            // tratada derrubava a tela inteira do Blazor ("ocorreu um erro, recarregar"). Muitas
+            // dessas falhas são COMException com Message vazio (HRESULT sem descrição mapeada no
+            // Windows da máquina) — por isso mostra tipo + HResult, não só a Message.
+            var detail = string.IsNullOrWhiteSpace(ex.Message) ? "" : $": {ex.Message}";
+            _statusMessage = $"Não foi possível abrir o seletor de arquivo: {ex.GetType().Name} (0x{ex.HResult:X8}){detail}";
+            _statusIsError = true;
+        }
+    }
+
+    private ConnectionProfile BuildProfile() => new()
+    {
+        Id = EditingProfile?.Id ?? Guid.NewGuid().ToString("N"),
+        Name = _form.Name,
+        Kind = _form.Kind,
+        Host = _form.Host,
+        Port = _form.Port ?? (_form.Kind is DatabaseKind.SqlServer or DatabaseKind.Sqlite ? null : ConnectionProfile.DefaultPort(_form.Kind)),
+        Database = _form.Database,
+        Username = _form.Username
+    };
+
+    private async Task TestConnection()
+    {
+        _testing = true;
+        _statusMessage = null;
+        try
+        {
+            var profile = BuildProfile();
+            using var connection = ConnectionFactory.CreateConnection(profile, _password);
+            await connection.OpenAsync();
+            _statusMessage = "Conexão bem-sucedida.";
+            _statusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            _statusMessage = $"Falha ao conectar: {ex.Message}";
+            _statusIsError = true;
+        }
+        finally
+        {
+            _testing = false;
+        }
+    }
+
+    private async Task Save()
+    {
+        var profile = BuildProfile();
+        await ProfileStore.SaveAsync(profile);
+        if (profile.Kind == DatabaseKind.Sqlite)
+        {
+            // SQLite não usa senha, mas o resto do app (grid editável, autocomplete) trata "sem
+            // credencial salva" como conexão nunca configurada — grava um valor fixo (nunca lido de
+            // verdade) só pra existir uma credencial. String vazia não serve: no Windows o SecureStorage
+            // usa o PasswordVault, que rejeita senha vazia ("Value does not fall within the expected range").
+            await CredentialStore.SavePasswordAsync(profile.Id, "sqlite");
+        }
+        else if (!string.IsNullOrEmpty(_password))
+        {
+            await CredentialStore.SavePasswordAsync(profile.Id, _password);
+        }
+
+        await OnSaved.InvokeAsync();
+    }
+
+    private class ConnectionProfileForm
+    {
+        public string Name { get; set; } = string.Empty;
+        public DatabaseKind Kind { get; set; } = DatabaseKind.Oracle;
+        public string Host { get; set; } = string.Empty;
+        public int? Port { get; set; } = ConnectionProfile.DefaultPort(DatabaseKind.Oracle);
+        public string Database { get; set; } = string.Empty;
+        public string Username { get; set; } = string.Empty;
+    }
+}

@@ -1,0 +1,383 @@
+@page "/configuracoes"
+@using SQLFlow.Shared.Services
+@using SQLFlow.Services
+@inject ThemeService ThemeService
+@inject AppSettingsService AppSettings
+@inject SqlFileService SqlFileService
+@implements IDisposable
+
+<PageTitle>Configurações - SQLFlow</PageTitle>
+
+<div class="settings-shell">
+    <header class="settings-topbar">
+        <a href="/" class="settings-back" title="Voltar para o workspace">
+            <span aria-hidden="true">←</span> Voltar
+        </a>
+        <span class="settings-topbar-sep">/</span>
+        <span class="settings-topbar-title">Configurações</span>
+    </header>
+
+    <div class="settings-body">
+        <nav class="settings-nav" aria-label="Categorias de configuração">
+            <button type="button" class="settings-nav-item @(IsActiveSection("geral"))" @onclick='() => SelectSection("geral")'>
+                <span class="settings-nav-icon icon-appearance" aria-hidden="true"></span>
+                Geral
+            </button>
+            <button type="button" class="settings-nav-item @(IsActiveSection("comandos"))" @onclick='() => SelectSection("comandos")'>
+                <span class="settings-nav-icon icon-commands" aria-hidden="true"></span>
+                Comandos
+            </button>
+        </nav>
+
+        <div class="settings-content">
+            @if (_activeSection == "geral")
+            {
+            <section class="settings-section">
+                <div class="settings-section-header">
+                    <span class="settings-eyebrow">Geral</span>
+                    <h1>Tema de cores</h1>
+                    <p class="settings-section-desc">Escolha a paleta de cores usada em toda a aplicação. A alteração é aplicada imediatamente e lembrada na próxima vez que você abrir o SQLFlow.</p>
+                </div>
+
+                <div class="theme-grid" role="radiogroup" aria-label="Tema de cores">
+                    <button type="button" class="theme-card @(IsSelected(ThemeService.Light))" role="radio"
+                            aria-checked="@((ThemeService.CurrentTheme == ThemeService.Light).ToString().ToLowerInvariant())"
+                            @onclick="() => SelectThemeAsync(ThemeService.Light)">
+                        <span class="theme-preview theme-preview-light" aria-hidden="true">
+                            <span class="theme-preview-topbar">
+                                <span class="theme-preview-dot"></span>
+                                <span class="theme-preview-brand"></span>
+                            </span>
+                            <span class="theme-preview-body">
+                                <span class="theme-preview-tree">
+                                    <span></span><span></span><span></span>
+                                </span>
+                                <span class="theme-preview-main">
+                                    <span class="theme-preview-line long"></span>
+                                    <span class="theme-preview-line"></span>
+                                    <span class="theme-preview-line short"></span>
+                                </span>
+                            </span>
+                        </span>
+                        <span class="theme-card-footer">
+                            <span class="theme-radio" aria-hidden="true"></span>
+                            <span class="theme-card-label">Claro</span>
+                        </span>
+                    </button>
+
+                    <button type="button" class="theme-card @(IsSelected(ThemeService.Dark))" role="radio"
+                            aria-checked="@((ThemeService.CurrentTheme == ThemeService.Dark).ToString().ToLowerInvariant())"
+                            @onclick="() => SelectThemeAsync(ThemeService.Dark)">
+                        <span class="theme-preview theme-preview-dark" aria-hidden="true">
+                            <span class="theme-preview-topbar">
+                                <span class="theme-preview-dot"></span>
+                                <span class="theme-preview-brand"></span>
+                            </span>
+                            <span class="theme-preview-body">
+                                <span class="theme-preview-tree">
+                                    <span></span><span></span><span></span>
+                                </span>
+                                <span class="theme-preview-main">
+                                    <span class="theme-preview-line long"></span>
+                                    <span class="theme-preview-line"></span>
+                                    <span class="theme-preview-line short"></span>
+                                </span>
+                            </span>
+                        </span>
+                        <span class="theme-card-footer">
+                            <span class="theme-radio" aria-hidden="true"></span>
+                            <span class="theme-card-label">Escuro</span>
+                        </span>
+                    </button>
+
+                    <button type="button" class="theme-card @(IsSelected(ThemeService.FreshcutContrast))" role="radio"
+                            aria-checked="@((ThemeService.CurrentTheme == ThemeService.FreshcutContrast).ToString().ToLowerInvariant())"
+                            @onclick="() => SelectThemeAsync(ThemeService.FreshcutContrast)">
+                        <span class="theme-preview theme-preview-freshcut" aria-hidden="true">
+                            <span class="theme-preview-topbar">
+                                <span class="theme-preview-dot"></span>
+                                <span class="theme-preview-brand"></span>
+                            </span>
+                            <span class="theme-preview-body">
+                                <span class="theme-preview-tree">
+                                    <span></span><span></span><span></span>
+                                </span>
+                                <span class="theme-preview-main">
+                                    <span class="theme-preview-line long"></span>
+                                    <span class="theme-preview-line"></span>
+                                    <span class="theme-preview-line short"></span>
+                                </span>
+                            </span>
+                        </span>
+                        <span class="theme-card-footer">
+                            <span class="theme-radio" aria-hidden="true"></span>
+                            <span class="theme-card-label">Freshcut Contrast</span>
+                        </span>
+                    </button>
+
+                    <button type="button" class="theme-card @(IsSelected(ThemeService.Juju))" role="radio"
+                            aria-checked="@((ThemeService.CurrentTheme == ThemeService.Juju).ToString().ToLowerInvariant())"
+                            @onclick="() => SelectThemeAsync(ThemeService.Juju)">
+                        <span class="theme-preview theme-preview-juju" aria-hidden="true">
+                            <span class="theme-preview-topbar">
+                                <span class="theme-preview-dot"></span>
+                                <span class="theme-preview-brand"></span>
+                            </span>
+                            <span class="theme-preview-body">
+                                <span class="theme-preview-tree">
+                                    <span></span><span></span><span></span>
+                                </span>
+                                <span class="theme-preview-main">
+                                    <span class="theme-preview-line long"></span>
+                                    <span class="theme-preview-line"></span>
+                                    <span class="theme-preview-line short"></span>
+                                </span>
+                            </span>
+                        </span>
+                        <span class="theme-card-footer">
+                            <span class="theme-radio" aria-hidden="true"></span>
+                            <span class="theme-card-label">Juju</span>
+                        </span>
+                    </button>
+
+                    <button type="button" class="theme-card @(IsSelected(ThemeService.GreenWeslin))" role="radio"
+                            aria-checked="@((ThemeService.CurrentTheme == ThemeService.GreenWeslin).ToString().ToLowerInvariant())"
+                            @onclick="() => SelectThemeAsync(ThemeService.GreenWeslin)">
+                        <span class="theme-preview theme-preview-green-weslin" aria-hidden="true">
+                            <span class="theme-preview-topbar">
+                                <span class="theme-preview-dot"></span>
+                                <span class="theme-preview-brand"></span>
+                            </span>
+                            <span class="theme-preview-body">
+                                <span class="theme-preview-tree">
+                                    <span></span><span></span><span></span>
+                                </span>
+                                <span class="theme-preview-main">
+                                    <span class="theme-preview-line long"></span>
+                                    <span class="theme-preview-line"></span>
+                                    <span class="theme-preview-line short"></span>
+                                </span>
+                            </span>
+                        </span>
+                        <span class="theme-card-footer">
+                            <span class="theme-radio" aria-hidden="true"></span>
+                            <span class="theme-card-label">GreenWeslin</span>
+                        </span>
+                    </button>
+
+                    <button type="button" class="theme-card @(IsSelected(ThemeService.GreenWeslinDark))" role="radio"
+                            aria-checked="@((ThemeService.CurrentTheme == ThemeService.GreenWeslinDark).ToString().ToLowerInvariant())"
+                            @onclick="() => SelectThemeAsync(ThemeService.GreenWeslinDark)">
+                        <span class="theme-preview theme-preview-green-weslin-dark" aria-hidden="true">
+                            <span class="theme-preview-topbar">
+                                <span class="theme-preview-dot"></span>
+                                <span class="theme-preview-brand"></span>
+                            </span>
+                            <span class="theme-preview-body">
+                                <span class="theme-preview-tree">
+                                    <span></span><span></span><span></span>
+                                </span>
+                                <span class="theme-preview-main">
+                                    <span class="theme-preview-line long"></span>
+                                    <span class="theme-preview-line"></span>
+                                    <span class="theme-preview-line short"></span>
+                                </span>
+                            </span>
+                        </span>
+                        <span class="theme-card-footer">
+                            <span class="theme-radio" aria-hidden="true"></span>
+                            <span class="theme-card-label">GreenWeslinDark</span>
+                        </span>
+                    </button>
+                </div>
+
+                <div class="settings-section-header settings-section-header-spaced">
+                    <span class="settings-eyebrow">Geral</span>
+                    <h1>Resultados simultâneos</h1>
+                    <p class="settings-section-desc">Quando você roda até 3 consultas ao mesmo tempo (selecionando o trecho com várias consultas), escolha como os resultados aparecem na tela.</p>
+                </div>
+
+                <div class="layout-grid" role="radiogroup" aria-label="Layout dos resultados simultâneos">
+                    <button type="button" class="layout-card @(IsLayoutSelected(true))" role="radio"
+                            aria-checked="@(AppSettings.ParallelResultsHorizontal.ToString().ToLowerInvariant())"
+                            @onclick="() => SelectLayoutAsync(true)">
+                        <span class="layout-preview layout-preview-horizontal" aria-hidden="true">
+                            <span></span><span></span><span></span>
+                        </span>
+                        <span class="theme-card-footer">
+                            <span class="theme-radio" aria-hidden="true"></span>
+                            <span class="theme-card-label">Lado a lado</span>
+                        </span>
+                    </button>
+
+                    <button type="button" class="layout-card @(IsLayoutSelected(false))" role="radio"
+                            aria-checked="@((!AppSettings.ParallelResultsHorizontal).ToString().ToLowerInvariant())"
+                            @onclick="() => SelectLayoutAsync(false)">
+                        <span class="layout-preview layout-preview-vertical" aria-hidden="true">
+                            <span></span><span></span><span></span>
+                        </span>
+                        <span class="theme-card-footer">
+                            <span class="theme-radio" aria-hidden="true"></span>
+                            <span class="theme-card-label">Empilhado</span>
+                        </span>
+                    </button>
+                </div>
+
+                <div class="settings-section-header settings-section-header-spaced">
+                    <span class="settings-eyebrow">Arquivos</span>
+                    <h1>Pasta padrão de scripts</h1>
+                    <p class="settings-section-desc">Onde o botão "Salvar" grava um script novo direto, sem abrir diálogo de pasta. Use "Salvar como", no editor, pra escolher outro lugar pontualmente.</p>
+                </div>
+
+                <div class="settings-path-row">
+                    <input class="db-input" value="@AppSettings.DefaultScriptsDirectory" readonly />
+                    <button type="button" class="db-btn db-btn-ghost" @onclick="PickDefaultScriptsDirectoryAsync">Escolher pasta...</button>
+                </div>
+                @if (_pickFolderError is not null)
+                {
+                    <p class="settings-inline-error">@_pickFolderError</p>
+                }
+            </section>
+            }
+            else if (_activeSection == "comandos")
+            {
+            <section class="settings-section settings-section-wide">
+                <div class="settings-section-header">
+                    <span class="settings-eyebrow">Comandos</span>
+                    <h1>Atalhos de teclado</h1>
+                    <p class="settings-section-desc">Todos os atalhos disponíveis no editor SQL e na grade de resultado.</p>
+                </div>
+
+                <div class="shortcut-cards">
+                    <div class="shortcut-card">
+                        <div class="shortcut-card-header">
+                            <span class="shortcut-card-icon icon-editor-card" aria-hidden="true"></span>
+                            <h2>Editor SQL</h2>
+                        </div>
+                        <ul class="shortcut-list">
+                            <li class="shortcut-row">
+                                <span class="shortcut-keys"><kbd>Ctrl</kbd><span class="shortcut-plus">+</span><kbd>Enter</kbd><span class="shortcut-or">ou</span><kbd>F5</kbd></span>
+                                <span class="shortcut-desc">Executa o texto selecionado, ou o comando SQL onde o cursor está.</span>
+                            </li>
+                            <li class="shortcut-row">
+                                <span class="shortcut-keys"><kbd>Ctrl</kbd><span class="shortcut-plus">+</span><kbd>Shift</kbd><span class="shortcut-plus">+</span><kbd>F</kbd></span>
+                                <span class="shortcut-desc">Formata o SQL selecionado, ou o comando onde o cursor está.</span>
+                            </li>
+                            <li class="shortcut-row">
+                                <span class="shortcut-keys"><kbd>Ctrl</kbd><span class="shortcut-plus">+</span><kbd>/</kbd></span>
+                                <span class="shortcut-desc">Comenta ou descomenta as linhas selecionadas.</span>
+                            </li>
+                            <li class="shortcut-row">
+                                <span class="shortcut-keys"><kbd>Ctrl</kbd><span class="shortcut-plus">+</span><kbd>]</kbd></span>
+                                <span class="shortcut-desc">Abre uma aba de script nova — funciona com o foco em qualquer lugar da tela, não só dentro do editor.</span>
+                            </li>
+                            <li class="shortcut-row">
+                                <span class="shortcut-keys"><kbd>Esc</kbd></span>
+                                <span class="shortcut-desc">Sai da tela cheia do editor (quando expandido).</span>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <div class="shortcut-card">
+                        <div class="shortcut-card-header">
+                            <span class="shortcut-card-icon icon-grid-card" aria-hidden="true"></span>
+                            <h2>Grade de resultado</h2>
+                        </div>
+                        <ul class="shortcut-list">
+                            <li class="shortcut-row">
+                                <span class="shortcut-keys"><span class="shortcut-action">Duplo clique</span></span>
+                                <span class="shortcut-desc">Edita o valor da célula (quando a grade está editável).</span>
+                            </li>
+                            <li class="shortcut-row">
+                                <span class="shortcut-keys"><kbd>Enter</kbd></span>
+                                <span class="shortcut-desc">Confirma o valor editado na célula.</span>
+                            </li>
+                            <li class="shortcut-row">
+                                <span class="shortcut-keys"><kbd>Esc</kbd></span>
+                                <span class="shortcut-desc">Cancela a edição da célula, ou sai da tela cheia do resultado.</span>
+                            </li>
+                            <li class="shortcut-row">
+                                <span class="shortcut-keys"><span class="shortcut-action">Clique no cabeçalho</span></span>
+                                <span class="shortcut-desc">Seleciona a coluna inteira, pra copiar com Ctrl+C.</span>
+                            </li>
+                            <li class="shortcut-row">
+                                <span class="shortcut-keys"><span class="shortcut-action">Clique no "#"</span></span>
+                                <span class="shortcut-desc">Seleciona a tabela inteira, pra copiar com Ctrl+C.</span>
+                            </li>
+                            <li class="shortcut-row">
+                                <span class="shortcut-keys"><kbd>Ctrl</kbd><span class="shortcut-plus">+</span><kbd>C</kbd></span>
+                                <span class="shortcut-desc">Copia a coluna ou a tabela selecionada.</span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        ThemeService.ThemeChanged += StateHasChanged;
+        AppSettings.Changed += StateHasChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await ThemeService.InitializeAsync();
+            StateHasChanged();
+        }
+    }
+
+    private string _activeSection = "geral";
+
+    private string IsActiveSection(string section) => _activeSection == section ? "active" : string.Empty;
+
+    private void SelectSection(string section) => _activeSection = section;
+
+    private string IsSelected(string theme) => ThemeService.CurrentTheme == theme ? "selected" : string.Empty;
+
+    private async Task SelectThemeAsync(string theme)
+    {
+        await ThemeService.SetThemeAsync(theme);
+    }
+
+    private string IsLayoutSelected(bool horizontal) => AppSettings.ParallelResultsHorizontal == horizontal ? "selected" : string.Empty;
+
+    private void SelectLayoutAsync(bool horizontal) => AppSettings.SetParallelResultsHorizontal(horizontal);
+
+    private string? _pickFolderError;
+
+    private async Task PickDefaultScriptsDirectoryAsync()
+    {
+        _pickFolderError = null;
+        try
+        {
+            var path = await SqlFileService.PickFolderAsync();
+            if (path is not null)
+            {
+                AppSettings.SetDefaultScriptsDirectory(path);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Em algumas máquinas o seletor nativo de pasta do Windows (Windows.Storage.Pickers)
+            // falha (política de grupo, versão do Windows etc.) — sem esse catch, a exceção não
+            // tratada derrubava a tela inteira do Blazor ("ocorreu um erro, recarregar"). Muitas
+            // dessas falhas são COMException com Message vazio (HRESULT sem descrição mapeada no
+            // Windows da máquina) — por isso mostra tipo + HResult, não só a Message.
+            var detail = string.IsNullOrWhiteSpace(ex.Message) ? "" : $": {ex.Message}";
+            _pickFolderError = $"Não foi possível abrir o seletor de pasta: {ex.GetType().Name} (0x{ex.HResult:X8}){detail}";
+        }
+    }
+
+    public void Dispose()
+    {
+        ThemeService.ThemeChanged -= StateHasChanged;
+        AppSettings.Changed -= StateHasChanged;
+    }
+}

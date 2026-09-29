@@ -1,0 +1,9 @@
+@* Router local: as páginas de banco de dados (SQLFlow.Data + drivers ADO.NET) não podem viver em
+   SQLFlow.Shared, pois esse assembly também é compilado para o SQLFlow.Web.Client (Blazor WebAssembly),
+   onde esses drivers não funcionam. Layout/NavMenu continuam vindo de SQLFlow.Shared (são só UI). *@
+<Router AppAssembly="typeof(App).Assembly" NotFoundPage="typeof(SQLFlow.Shared.Pages.NotFound)">
+    <Found Context="routeData">
+        <RouteView RouteData="routeData" DefaultLayout="typeof(SQLFlow.Shared.Layout.MainLayout)" />
+        <FocusOnNavigate RouteData="routeData" Selector="h1" />
+    </Found>
+</Router>
