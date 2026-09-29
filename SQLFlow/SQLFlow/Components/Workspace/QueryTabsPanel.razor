@@ -374,7 +374,7 @@
                                             }
                                             else
                                             {
-                                                <td @key="columnIndex" data-column="@column" title="@(IsCellValueTruncated(value) ? "Valor grande demais pra exibir inteiro na grid — completo ao copiar/exportar" : null)" class="@(value is null ? "cell-null" : null) @(pendingEdited ? "cell-pending-edit" : null) @(editable ? "cell-editable" : null) @(_selectedColumn == column ? "column-selected" : null) @(_selectedCell is { } sc && sc.RowIndex == rowIndex && sc.Column == column ? "cell-selected" : null)"
+                                                <td @key="columnIndex" data-column="@column" title="@CellTitle(value)" class="@(value is null ? "cell-null" : null) @(pendingEdited ? "cell-pending-edit" : null) @(editable ? "cell-editable" : null) @(_selectedColumn == column ? "column-selected" : null) @(_selectedCell is { } sc && sc.RowIndex == rowIndex && sc.Column == column ? "cell-selected" : null)"
                                                     @ondblclick="() => OnCellDoubleClick(rowIndex, column, value, editable)">
                                                     @FormatCellForDisplay(value)
                                                 </td>
@@ -612,6 +612,11 @@
     @if (_errorModalOpen && ActiveTab?.Error is not null)
     {
         <QueryErrorModal ErrorMessage="@ActiveTab.Error" ErrorLine="@ActiveTab.ErrorLine" Sql="@ActiveTab.LastExecutedSql" OnClose="CloseErrorModal" />
+    }
+
+    @if (_blobViewer is { } blob)
+    {
+        <BlobViewerModal ColumnName="@blob.Column" Bytes="@blob.Bytes" OnClose="CloseBlobViewer" />
     }
 
     <ConfirmDialog @ref="_confirmDialog" />
@@ -948,7 +953,7 @@
             {
                 var pendingEdited = ActiveTab.PendingEdits.TryGetValue(r.Index, out var rowEdits) && rowEdits.ContainsKey(column);
                 var value = pendingEdited ? rowEdits![column] : r.Row.GetValueOrDefault(column);
-                return value?.ToString() ?? "NULL";
+                return FormatValueForCopy(value);
             });
 
             await Clipboard.Default.SetTextAsync(string.Join(Environment.NewLine, lines));
@@ -962,7 +967,7 @@
             var values = result.Columns.Select(c =>
             {
                 var value = pendingEdits is not null && pendingEdits.TryGetValue(c, out var edited) ? edited : row.GetValueOrDefault(c);
-                return value?.ToString() ?? "NULL";
+                return FormatValueForCopy(value);
             });
 
             await Clipboard.Default.SetTextAsync(string.Join("\t", values));
@@ -973,7 +978,7 @@
         {
             var pendingEdited = ActiveTab.PendingEdits.TryGetValue(cell.RowIndex, out var rowEdits) && rowEdits.ContainsKey(cell.Column);
             var value = pendingEdited ? rowEdits![cell.Column] : result.Rows[cell.RowIndex].GetValueOrDefault(cell.Column);
-            await Clipboard.Default.SetTextAsync(value?.ToString() ?? "NULL");
+            await Clipboard.Default.SetTextAsync(FormatValueForCopy(value));
         }
     }
 
@@ -1037,9 +1042,25 @@
 
     private static bool IsCellValueTruncated(object? value) => value is string text && text.Length > CellPreviewMaxChars;
 
+    /// <summary>Dica exibida no title do <td> — diferencia o motivo de não conseguir ver/editar o
+    /// valor inteiro direto na grid (texto grande vs. BLOB, que tem tratamento próprio: ver
+    /// OnCellDoubleClick/BlobViewerModal), ou null quando o valor já aparece inteiro na célula.</summary>
+    private static string? CellTitle(object? value) => value switch
+    {
+        byte[] => "Duplo clique pra ver o conteúdo binário",
+        string text when text.Length > CellPreviewMaxChars => "Valor grande demais pra exibir inteiro na grid — completo ao copiar/exportar",
+        _ => null
+    };
+
+    // BLOB/varbinary chega como byte[] — ToString() nesse tipo sempre dá "System.Byte[]" em vez do
+    // dado, e jogar o binário inteiro (ou um hex dele) pro DOM da grid é tanto ilegível quanto
+    // arriscado de travar o WebView2 em BLOBs grandes (mesma razão do CellPreviewMaxChars). Igual
+    // DBeaver: a célula só mostra um rótulo — o valor de verdade só aparece no duplo-clique, que abre
+    // o BlobViewerModal (ver OnCellDoubleClick/OnInsertCellDoubleClick).
     private static string FormatCellForDisplay(object? value)
     {
         if (value is null) return "NULL";
+        if (value is byte[] bytes) return $"BLOB ({bytes.Length:N0} byte(s))";
         if (value is string text && text.Length > CellPreviewMaxChars)
         {
             return text[..CellPreviewMaxChars] + $"… (+{text.Length - CellPreviewMaxChars:N0} caractere(s) — copie a célula ou exporte pra ver o valor completo)";
@@ -1048,8 +1069,35 @@
         return value.ToString() ?? string.Empty;
     }
 
+    /// <summary>Usado só pra Ctrl+C (célula/linha/coluna): ao contrário de FormatCellForDisplay, não
+    /// troca o BLOB por um rótulo — a área de transferência não passa pelo limite de render batch do
+    /// Blazor que limita a grid (ver comentário de CellPreviewMaxChars), então copia o valor binário
+    /// inteiro, em hexadecimal (mesmo formato que o BlobViewerModal usa na aba "Hex").</summary>
+    private static string FormatValueForCopy(object? value) => value switch
+    {
+        null => "NULL",
+        byte[] bytes => "0x" + Convert.ToHexString(bytes),
+        _ => value.ToString() ?? "NULL"
+    };
+
+    /// <summary>Coluna + bytes do BLOB aberto no momento no BlobViewerModal, ou null se nenhum estiver
+    /// aberto (ver OpenBlobViewer/CloseBlobViewer e o bloco @if perto do ConfirmDialog no topo do
+    /// arquivo).</summary>
+    private (string Column, byte[] Bytes)? _blobViewer;
+
+    private void OpenBlobViewer(string column, byte[] bytes) => _blobViewer = (column, bytes);
+    private void CloseBlobViewer() => _blobViewer = null;
+
     private async Task OnCellDoubleClick(int rowIndex, string column, object? currentValue, bool editable)
     {
+        // BLOB nunca edita direto na grid (CoerceEditedValue não sabe converter texto digitado de
+        // volta pra byte[]) — abre o viewer em vez de entrar em modo edição, mesmo em coluna editável.
+        if (currentValue is byte[] bytes)
+        {
+            OpenBlobViewer(column, bytes);
+            return;
+        }
+
         if (!editable) return;
         if (IsCellValueTruncated(currentValue))
         {
@@ -1067,6 +1115,12 @@
 
     private async Task OnInsertCellDoubleClick(int insertIndex, string column, object? currentValue)
     {
+        if (currentValue is byte[] bytes)
+        {
+            OpenBlobViewer(column, bytes);
+            return;
+        }
+
         if (IsCellValueTruncated(currentValue))
         {
             if (_confirmDialog is not null)

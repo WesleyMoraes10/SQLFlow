@@ -1,0 +1,108 @@
+<div class="blob-modal-backdrop" @onclick="() => OnClose.InvokeAsync()"></div>
+<div class="blob-modal-panel" role="dialog">
+    <div class="blob-modal-header">
+        <div class="blob-modal-header-title">
+            <span class="blob-modal-icon"></span>
+            <h2>Valor binário — @ColumnName</h2>
+        </div>
+        <button type="button" class="blob-modal-close-btn" title="Fechar" @onclick="() => OnClose.InvokeAsync()">
+            <span class="blob-modal-field-icon icon-close"></span>
+        </button>
+    </div>
+
+    <div class="blob-modal-toolbar">
+        <span class="blob-modal-size">@Bytes.Length.ToString("N0") byte(s)</span>
+        @if (_hasText)
+        {
+            <div class="blob-modal-tabs">
+                <button type="button" class="blob-modal-tab @(_mode == ViewMode.Text ? "blob-modal-tab-active" : "")" @onclick="() => _mode = ViewMode.Text">Texto</button>
+                <button type="button" class="blob-modal-tab @(_mode == ViewMode.Hex ? "blob-modal-tab-active" : "")" @onclick="() => _mode = ViewMode.Hex">Hex</button>
+            </div>
+        }
+    </div>
+
+    <pre class="blob-modal-content">@(_mode == ViewMode.Text ? _text : _hexDump)</pre>
+
+    <div class="blob-modal-actions">
+        <button type="button" class="db-btn db-btn-primary" @onclick="() => OnClose.InvokeAsync()">Fechar</button>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string ColumnName { get; set; } = string.Empty;
+    [Parameter] public byte[] Bytes { get; set; } = Array.Empty<byte>();
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    // Teto de bytes realmente processados pro dump/decodificação — um BLOB de dezenas de MB (ex.: uma
+    // imagem/PDF gravado no banco) virando hex ou texto inteiro trava o WebView2 do mesmo jeito que o
+    // CellPreviewMaxChars da grid evita (ver QueryTabsPanel). 64 KB já é ilegível de sobra num <pre>.
+    private const int PreviewMaxBytes = 65536;
+
+    private enum ViewMode { Text, Hex }
+
+    private bool _hasText;
+    private string _text = string.Empty;
+    private string _hexDump = string.Empty;
+    private ViewMode _mode = ViewMode.Hex;
+
+    protected override void OnParametersSet()
+    {
+        _hexDump = BuildHexDump(Bytes);
+        _hasText = TryDecodeAsText(Bytes, out _text);
+        _mode = _hasText ? ViewMode.Text : ViewMode.Hex;
+    }
+
+    /// <summary>Só considera "é texto" se o BLOB inteiro (não só o preview capado) for UTF-8 válido —
+    /// senão um corte no meio de um caractere multi-byte perto do limite do preview derrubaria a
+    /// decodificação por acidente, mesmo o conteúdo sendo texto de verdade.</summary>
+    private static bool TryDecodeAsText(byte[] bytes, out string text)
+    {
+        try
+        {
+            var decoded = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true)
+                .GetString(bytes);
+            text = decoded.Length > PreviewMaxBytes
+                ? decoded[..PreviewMaxBytes] + $"\n\n… (+{decoded.Length - PreviewMaxBytes:N0} caractere(s) — copie ou exporte a consulta pra ver tudo)"
+                : decoded;
+            return true;
+        }
+        catch (System.Text.DecoderFallbackException)
+        {
+            text = string.Empty;
+            return false;
+        }
+    }
+
+    private static string BuildHexDump(byte[] bytes)
+    {
+        var limited = bytes.Length > PreviewMaxBytes;
+        var length = limited ? PreviewMaxBytes : bytes.Length;
+        var sb = new System.Text.StringBuilder();
+
+        for (var offset = 0; offset < length; offset += 16)
+        {
+            var lineLength = Math.Min(16, length - offset);
+            sb.Append(offset.ToString("X8")).Append("  ");
+            for (var i = 0; i < 16; i++)
+            {
+                if (i < lineLength) sb.Append(bytes[offset + i].ToString("X2")).Append(' ');
+                else sb.Append("   ");
+                if (i == 7) sb.Append(' ');
+            }
+            sb.Append(' ');
+            for (var i = 0; i < lineLength; i++)
+            {
+                var b = bytes[offset + i];
+                sb.Append(b is >= 32 and < 127 ? (char)b : '.');
+            }
+            sb.Append('\n');
+        }
+
+        if (limited)
+        {
+            sb.Append($"\n… (+{bytes.Length - PreviewMaxBytes:N0} byte(s) — mostrando só os primeiros {PreviewMaxBytes:N0})");
+        }
+
+        return sb.ToString();
+    }
+}
